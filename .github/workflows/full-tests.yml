@@ -67,6 +67,9 @@ jobs:
       # - name: run library benchmarks
       #   run: cd scientific_library && python -m pytest --benchmark-only
 
+      - name: upgrade markupsafe
+        run: pip3 install -U markupsafe
+
       - name: run framework tests
         run: cd framework_tvb && python -m pytest
 
