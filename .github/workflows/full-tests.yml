@@ -17,7 +17,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       
       - name: upgrade pip
-        run: python -m pip install --upgrade pip
+        run: python3 -m pip install --upgrade pip
 
       - name: put ~/.local/bin on $PATH
         run: echo "PATH=$HOME/.local/bin:$PATH" >> $GITHUB_ENV
@@ -35,8 +35,8 @@ jobs:
       - name: pip install dependencies (from Dockerfile-build)
         if: steps.cache-local.outputs.cache-hit != 'true'
         run: |
-          pip install --user -r requirements.txt
-          pip install --user --no-build-isolation tvb-gdist
+          pip3 install --user -r requirements.txt
+          pip3 install --user --no-build-isolation tvb-gdist
 
       - name: setup tvb
         run: cd tvb_build && bash install_full_tvb.sh
@@ -71,7 +71,7 @@ jobs:
         run: pip3 install -U 'markupsafe==2.0.1'
 
       - name: run framework tests
-        run: cd framework_tvb && python -m pytest
+        run: cd framework_tvb && python3 -m pytest
 
       - name: run storage tests
-        run: cd tvb_storage && python -m pytest
+        run: cd tvb_storage && python3 -m pytest
