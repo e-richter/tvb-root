@@ -47,6 +47,10 @@ will be consistent with Monitor periods corresponding to any of [4096, 2048, 102
 import abc
 import functools
 import numpy
+import theano
+import theano.tensor as tt
+from theano.graph.op import Op
+from theano.graph.basic import Apply
 import scipy.integrate
 from . import noise
 from .common import get_logger, simple_gen_astr
@@ -607,3 +611,100 @@ class Dop853(SciPyODE, Integrator):
 
 class Dop853Stochastic(SciPySDE, IntegratorStochastic):
     _scipy_ode_integrator_name = "dop853"
+
+class IntegratorToTheano(Op):
+    floatX = theano.config.floatX
+
+    _itypes = [
+        tt.TensorType(floatX, (False,)),  # y0 as 1D floatX vector
+        tt.TensorType(floatX, (False,)),  # params as 1D floatX vector
+    ]
+    _otypes = [
+        tt.TensorType(floatX, (False, False, False, False))
+    ]
+
+    def __init__(
+            self,
+            model_instance,
+            integrator_instance: Integrator,
+            simulation_length
+    ):
+        self.integrator_instance = integrator_instance
+        self.model_instance = model_instance
+        self.simulation_length = simulation_length
+
+        # TODO: get these parameters from simulator instance
+        self.coupling = numpy.zeros([1, 1, 1])
+        self.local_coupling = 0.0
+        self.stimulus = 0.0
+
+    def _to_tensor_dfun(self):
+        state_tensor = tt.tensor3("states_tensor", dtype="float64")
+        state_tensor.tag.test_value = numpy.ones([1, 1, 1])  # TODO: shape based on number_of_nodes etc.
+
+        params_tensor = tt.vector("params_tensor", dtype="float64")
+        params_tensor.tag.test_value = numpy.ones([1, ])  # TODO: shape based on number of parameters
+
+        coupling_tensor = tt.tensor3("coupling_tensor", dtype="float64")
+        coupling_tensor.tag.test_value = self.coupling
+
+        local_coupling_tensor = tt.scalar("local_coupling_tensor", dtype="float64")
+        local_coupling_tensor.tag.test_value = self.local_coupling
+
+        # stimulus_tensor = tt.scalar("stimulus_tensor", dtype="float64")
+        # stimulus_tensor.tag.test_value = self.stimulus
+
+        tensor_dfun = self.model_instance.tensor_dfun(state_tensor, coupling_tensor, local_coupling_tensor, params_tensor)
+
+        system = theano.function(
+            inputs=[state_tensor, coupling_tensor, local_coupling_tensor, params_tensor],
+            outputs=tensor_dfun
+        )
+
+        return system
+
+    def _system(self, state, coupling, local_coupling, params):
+        system = self._to_tensor_dfun()
+        return system(state, coupling, local_coupling, params)
+
+    def _simulate(self, initial_state, params):
+        state = initial_state
+        current_step = 0
+        start_step = current_step + 1
+        n_steps = int(math.ceil(self.simulation_length / self.integrator_instance.dt))
+
+        X = [initial_state.copy()]
+        for step in tqdm(range(start_step, start_step + n_steps)):
+            state[self.model_instance.state_variable_mask] = self.integrator_instance.scheme(
+                state[self.model_instance.state_variable_mask],
+                self._system,
+                self.coupling,
+                self.local_coupling,
+                self.stimulus,
+                params
+            )
+
+            X.append(state.copy())
+
+        X = np.asarray(X).astype(self.floatX)
+
+        return X
+
+    def make_node(self, y0, params) -> Apply:
+        inputs = (y0, params)
+        states = self._otypes[0]()
+
+        return Apply(self, inputs, (states, ))
+
+    def __call__(self, y0, params, **kwargs):
+        y0 = tt.cast(tt.unbroadcast(tt.as_tensor_variable(y0), 0), self.floatX)
+        params = tt.cast(tt.unbroadcast(tt.as_tensor_variable(params), 0), self.floatX)
+        inputs = [y0, params]
+
+        states = super().__call__(y0, params, **kwargs)
+
+        return states
+
+    def perform(self, node, inputs_storage, output_storage, **kwargs):
+        y0, params = inputs_storage[0], inputs_storage[1]
+        output_storage[0][0] = self._simulate(y0, params)
