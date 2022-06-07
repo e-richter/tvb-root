@@ -1,18 +1,23 @@
 import numpy as np
 import torch
 import math
-from typing import Dict, List
+from typing import Dict, List, Callable
+from tqdm import tqdm
 
+import sbi.inference
 from sbi import utils as sbi_utils
 from sbi import analysis as sbi_analysis
-from sbi.inference.base import infer
+from sbi.inference.base import infer, simulate_for_sbi
+from sbi.utils.user_input_checks import prepare_for_sbi
+from sbi.inference.posteriors.base_posterior import NeuralPosterior
+from torch.distributions import Distribution
 
 from tvb.simulator.simulator import Simulator
 from tvb.simulator.integrators import Integrator
 from tvb.simulator.models.base import Model
 
 
-class SNPEModel:
+class sbiModel:
     def __init__(
             self,
             # simulator_instance: Simulator,
@@ -32,7 +37,15 @@ class SNPEModel:
         self.priors = sbi_utils.torchutils.BoxUniform(low=torch.as_tensor(prior_min),
                                                       high=torch.as_tensor(prior_max))
 
-    def _simulation_wrapper(self, params):
+        self.posterior = None
+        self.posterior_samples = None
+        self.simulations = None
+        self.simulation_params = None
+        self.density_estimator = None
+        self.map_estimator = None
+        self.log_prob = None
+
+    def simulation_wrapper(self, params):
 
         # for i, param in enumerate(params):
         #     self.simulator_instance.model.__dict__[self.simulator_instance.model.parameter_names[i]] = np.asarray(param)
@@ -73,10 +86,71 @@ class SNPEModel:
 
         return torch.as_tensor(X)
 
-    def run_inference(self, num_simulations, num_workers, num_samples):
-        posterior = infer(self._simulation_wrapper, prior=self.priors, method="SNPE", num_simulations=num_simulations, num_workers=num_workers)
-        samples = posterior.sample((num_samples, ), x=torch.as_tensor(np.squeeze(self.obs["xs"])))
-        # log_prob = posterior.log_prob(samples, x=torch.as_tensor(np.squeeze(self.obs["xs"])))
-        return posterior, samples
+    def run_inference(
+            self,
+            method: str,
+            num_simulations: int,
+            num_workers: int,
+            num_samples: int
+    ):
+        self.posterior, self.simulations, self.simulation_params, self.density_estimator = infer_main(
+            simulator=self.simulation_wrapper,
+            prior=self.priors,
+            method=method,
+            num_simulations=num_simulations,
+            num_workers=num_workers
+        )
+        self.posterior.set_default_x(torch.as_tensor(np.squeeze(self.obs["x_obs"])))
+        self.posterior_samples = self.posterior.sample(sample_shape=(num_samples,))
+        self.log_prob = self.posterior.log_prob(self.posterior_samples)
+
+        # return self.posterior, self.posterior_samples, self.simulations, self.simulation_params, self.density_estimator
+
+    def simulations_from_samples(self, n):
+        X_pp = []
+        for sample in tqdm(self.posterior_samples[::n]):
+            sample = np.asarray(sample)
+            X = self.simulation_wrapper(params=sample)
+            X_pp.append(np.asarray(X))
+
+        X_pp = np.asarray(X_pp)
+        return X_pp
+
+    def get_sample(self):
+        return self.posterior.sample((1,)).numpy()
+
+    def get_map_estimator(self):
+        self.map_estimator = self.posterior.map(show_progress_bars=False)
+        return self.map_estimator
 
 
+def infer_main(
+        simulator: Callable,
+        prior: Distribution,
+        method: str,
+        num_simulations: int,
+        num_workers: int = 1
+):
+    try:
+        method_fun: Callable = getattr(sbi.inference, method.upper())
+    except AttributeError:
+        raise NameError(
+            "Method not available. `method` must be one of 'SNPE', 'SNLE', 'SNRE'."
+        )
+
+    simulator, prior = prepare_for_sbi(simulator, prior)
+
+    inference = method_fun(prior=prior)
+    theta, x = simulate_for_sbi(
+        simulator=simulator,
+        proposal=prior,
+        num_simulations=num_simulations,
+        num_workers=num_workers,
+    )
+    density_estimator = inference.append_simulations(theta, x).train()
+    if method == "SNPE":
+        posterior = inference.build_posterior()
+    else:
+        posterior = inference.build_posterior(mcmc_method="nuts")
+
+    return posterior, x, theta, density_estimator

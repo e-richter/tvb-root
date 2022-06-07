@@ -20,7 +20,9 @@ class NonCenteredModel:
         self.dt = None
         self.noise = None
 
+        self.trace = None
         self.inference_data = None
+        self.summary = None
 
     def set_model(
             self,
@@ -39,30 +41,57 @@ class NonCenteredModel:
         self.consts = consts
         self.obs = obs
         with self.pymc_model:
-            x_eta = pm.Normal(name="x_eta", mu=0.0, sd=1.0, shape=tuple(shape))
 
             self.dt = theano.shared(time_step, name="dt")
             self.noise = noise
 
-            output, updates = theano.scan(fn=self.sde_scheme, sequences=[x_eta], outputs_info=[x_init], n_steps=shape[0])
+            x_t = pm.Normal(name="x_t", mu=0.0, sd=1.0, shape=tuple(shape))
+            x_sim, updates = theano.scan(fn=self.scheme, sequences=[x_t], outputs_info=[x_init], n_steps=shape[0])
 
-            x_sym = output
+            x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_sim + offset)
 
-            xhat = pm.Deterministic(name="xhat", var=amplitude * x_sym + offset)
+            x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=epsilon, shape=tuple(shape), observed=self.obs["x_obs"])
 
-            xs = pm.Normal(name="xs", mu=xhat, sd=epsilon, shape=tuple(shape), observed=self.obs["xs"])
-
-    def sde_scheme(self, x_eta, x_prev):
+    def scheme(self, x_eta, x_prev):
         x_next = x_prev + self.dt * self.model_instance.theano_dfun(x_prev, {**self.priors, **self.consts}) + tt.sqrt(self.dt) * x_eta * self.noise
+
         return x_next
 
-    def run_inference(self, draws, tune, cores):
+    def run_inference(self, draws, tune, cores, target_accept):
         with self.pymc_model:
-            trace = pm.sample(draws=draws, tune=tune, cores=cores)
-            posterior_predictive = pm.sample_posterior_predictive(trace=trace)
-            self.inference_data = az.from_pymc3(trace=trace, posterior_predictive=posterior_predictive)
+            self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept)
+            posterior_predictive = pm.sample_posterior_predictive(trace=self.trace)
+            self.inference_data = az.from_pymc3(trace=self.trace, posterior_predictive=posterior_predictive)
+            self.summary = az.summary(self.inference_data)
 
         return self.inference_data
+
+    def model_criteria(self, criteria: List[str]):
+        out = dict()
+        if "WAIC" in criteria:
+            waic = az.waic(self.inference_data)
+            out["WAIC"] = waic.waic
+        if "LOO" in criteria:
+            loo = az.loo(self.inference_data)
+            out["LOO"] = loo.loo
+
+        map_estimate = None
+        if "AIC" in criteria:
+            with self.pymc_model:
+                map_estimate = pm.find_MAP()
+            aic = -2 * self.pymc_model.logp(map_estimate) + 2 * len(map_estimate)
+            out["AIC"] = aic
+        if "BIC" in criteria:
+            if map_estimate:
+                bic = -2 * self.pymc_model.logp(map_estimate) + len(map_estimate) * np.log(len(self.obs["xs"]))
+                out["BIC"] = bic
+            else:
+                with self.pymc_model:
+                    map_estimate = pm.find_MAP()
+                bic = -2 * self.pymc_model.logp(map_estimate) + len(map_estimate) * np.log(len(self.obs["xs"]))
+                out["BIC"] = bic
+
+        return out
 
 
 class CenteredModel:
@@ -76,7 +105,9 @@ class CenteredModel:
         self.dt = None
         self.noise = None
 
+        self.trace = None
         self.inference_data = None
+        self.summary = None
 
     def set_model(
             self,
@@ -95,31 +126,56 @@ class CenteredModel:
         self.consts = consts
         self.obs = obs
         with self.pymc_model:
-            x_eta = pm.Normal(name="x_eta", mu=0.0, sd=1.0, shape=tuple(shape))
 
             self.dt = theano.shared(time_step, name="dt")
             self.noise = noise
 
-            output, updates = theano.scan(fn=self.sde_scheme, sequences=[x_eta], outputs_info=[x_init], n_steps=shape[0])
+            x_sim, updates = theano.scan(fn=self.scheme, outputs_info=[x_init], n_steps=shape[0])
 
-            x_sym = output
+            x_t = pm.Normal(name="x_t", mu=x_sim, sd=tt.sqrt(time_step)*self.noise, shape=tuple(shape))
+            x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_t + offset)
 
-            xhat = pm.Deterministic(name="xhat", var=amplitude * x_sym + offset)
+            x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=epsilon, shape=tuple(shape), observed=self.obs["x_obs"])
 
-            xs = pm.Normal(name="xs", mu=xhat, sd=epsilon, shape=tuple(shape), observed=self.obs["xs"])
-
-    def sde_scheme(self, x_eta, x_prev):
-        x_next = x_prev + self.dt * self.model_instance.theano_dfun(x_prev, {**self.priors, **self.consts}) + tt.sqrt(self.dt) * x_eta * self.noise
+    def scheme(self, x_prev):
+        x_next = x_prev + self.dt * self.model_instance.theano_dfun(x_prev, {**self.priors, **self.consts})
         return x_next
 
-    def run_inference(self, draws, tune, cores):
+    def run_inference(self, draws, tune, cores, target_accept):
         with self.pymc_model:
-            trace = pm.sample(draws=draws, tune=tune, cores=cores)
-            posterior_predictive = pm.sample_posterior_predictive(trace=trace)
-            self.inference_data = az.from_pymc3(trace=trace, posterior_predictive=posterior_predictive)
+            self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept)
+            posterior_predictive = pm.sample_posterior_predictive(trace=self.trace)
+            self.inference_data = az.from_pymc3(trace=self.trace, posterior_predictive=posterior_predictive)
+            self.summary = az.summary(self.inference_data)
 
         return self.inference_data
 
+    def model_criteria(self, criteria: List[str]):
+        out = dict()
+        if "WAIC" in criteria:
+            waic = az.waic(self.inference_data)
+            out["WAIC"] = waic.waic
+        if "LOO" in criteria:
+            loo = az.loo(self.inference_data)
+            out["LOO"] = loo.loo
+
+        map_estimate = None
+        if "AIC" in criteria:
+            with self.pymc_model:
+                map_estimate = pm.find_MAP()
+            aic = -2 * self.pymc_model.logp(map_estimate) + 2 * len(map_estimate)
+            out["AIC"] = aic
+        if "BIC" in criteria:
+            if map_estimate:
+                bic = -2 * self.pymc_model.logp(map_estimate) + len(map_estimate) * np.log(len(self.obs["xs"]))
+                out["BIC"] = bic
+            else:
+                with self.pymc_model:
+                    map_estimate = pm.find_MAP()
+                bic = -2 * self.pymc_model.logp(map_estimate) + len(map_estimate) * np.log(len(self.obs["xs"]))
+                out["BIC"] = bic
+
+        return out
 
 
 class EulerMaruyamaModel:
@@ -154,7 +210,6 @@ class EulerMaruyamaModel:
             priors_tuple = tuple([value for _, value in self.priors.items()])
 
             xhat = EulerMaruyama(name="xhat", dt=self.dt, sde_fn=self.sde_fn, sde_pars=priors_tuple, shape=shape[0], testval=self.obs["xs"])
-
             xs = pm.Normal(name="xs", mu=xhat, sd=epsilon, shape=tuple(shape), observed=self.obs["xs"])
 
     def sde_fn(self, x, *args):

@@ -1,7 +1,8 @@
 from tvb.simulator.simulator import Simulator
-from tvb.contrib.inversion.pymcInference import NonCenteredModel, EulerMarayumaModel
+from tvb.contrib.inversion.pymcInference import NonCenteredModel, CenteredModel
 from typing import Literal, Dict, Union
 from pymc3.model import FreeRV, TransformedRV, DeterministicWrapper
+
 
 class StatisticalModel:
     def __init__(
@@ -16,10 +17,10 @@ class StatisticalModel:
 
     def pymc_inference(
             self,
-            method: Literal["NonCentered", "EulerMaruyama"],
+            method: Literal["NonCentered", "Centered"],
     ):
         if method == "NonCentered":
             self.statistical_model = NonCenteredModel(self.simulator_instance.model)
         elif method == "EulerMaruyama":
-            self.statistical_model = EulerMarayumaModel(self.simulator_instance.model)
+            self.statistical_model = CenteredModel(self.simulator_instance.model)
 
