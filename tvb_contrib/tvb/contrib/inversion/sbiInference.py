@@ -1,7 +1,9 @@
 import numpy as np
 import torch
 import math
-from typing import Dict, List, Callable
+import matplotlib.pyplot as plt
+import arviz as az
+from typing import Dict, List, Callable, Tuple, Union
 from tqdm import tqdm
 
 import sbi.inference
@@ -24,7 +26,8 @@ class sbiModel:
             integrator_instance: Integrator,
             model_instance: Model,
             obs: Dict,
-            priors: Dict[str, List]
+            priors: Dict[str, List],
+            obs_shape: Union[Tuple, List]
     ):
         # self.simulator_instance = simulator_instance
         self.integrator_instance = integrator_instance
@@ -34,8 +37,12 @@ class sbiModel:
         prior_min = [value[0] for _, value in priors.items()]
         prior_max = [value[1] for _, value in priors.items()]
 
-        self.priors = sbi_utils.torchutils.BoxUniform(low=torch.as_tensor(prior_min),
-                                                      high=torch.as_tensor(prior_max))
+        self.priors = sbi_utils.torchutils.BoxUniform(
+            low=torch.as_tensor(prior_min),
+            high=torch.as_tensor(prior_max)
+        )
+        self.prior_keys = [(i, key) for i, key in enumerate(priors)]
+        self.shape = tuple(obs_shape)
 
         self.posterior = None
         self.posterior_samples = None
@@ -43,9 +50,9 @@ class sbiModel:
         self.simulation_params = None
         self.density_estimator = None
         self.map_estimator = None
-        self.log_prob = None
+        self.inference_data = None
 
-    def simulation_wrapper(self, params):
+    def simulation_wrapper(self, params, return_sim=False):
 
         # for i, param in enumerate(params):
         #     self.simulator_instance.model.__dict__[self.simulator_instance.model.parameter_names[i]] = np.asarray(param)
@@ -55,8 +62,14 @@ class sbiModel:
         #
         # return torch.as_tensor(X)
 
-        for i, param in enumerate(params):
-            self.model_instance.__dict__[self.model_instance.parameter_names[i]] = np.asarray(param)
+        # for i, param in enumerate(params):
+        #     self.model_instance.__dict__[self.model_instance.parameter_names[i]] = np.asarray(param)
+
+        for (i, key) in self.prior_keys:
+            if key == "noise":
+                continue
+            self.model_instance.__dict__[key] = np.asarray(params[i])
+        epsilon = params[[i for (i, key) in self.prior_keys if key == "epsilon"][0]]
 
         self.model_instance.configure()
         self.integrator_instance.noise.configure()
@@ -68,12 +81,12 @@ class sbiModel:
         simulation_length = 100
         stimulus = 0.0
         local_coupling = 0.0
-        current_state = np.random.uniform(low=-1.0, high=1.0, size=[1, 1, 1])
+        current_state = np.random.uniform(low=-1.0, high=1.0, size=self.shape[1:])
         state = current_state
         current_step = 0
         number_of_nodes = 1
         start_step = current_step + 1
-        node_coupling = np.zeros([1, 1, 1])
+        node_coupling = np.zeros(self.shape[1:])
         n_steps = int(math.ceil(simulation_length / self.integrator_instance.dt))
 
         X = [current_state.copy()]
@@ -81,10 +94,19 @@ class sbiModel:
             state = self.integrator_instance.integrate(state, self.model_instance, node_coupling, local_coupling, stimulus)
             X.append(state.copy())
 
-        X = np.squeeze(np.asarray(X))
-        t = np.linspace(0, simulation_length, n_steps + 1)
+        X_sim = np.asarray(X)
+        # reshape output to be used by sbi TODO: eventually adjust when multiple nodes are simulated (shape[2]>1)
+        X_sim = X_sim.reshape(X_sim.size, order="F")
 
-        return torch.as_tensor(X)
+        X_obs = torch.as_tensor(X_sim) + torch.distributions.MultivariateNormal(
+            loc=torch.as_tensor(np.zeros(X_sim.shape)),
+            scale_tril=torch.diag(torch.as_tensor(epsilon * np.ones(X_sim.shape)))
+        ).sample()
+
+        if return_sim:
+            return torch.as_tensor(X_obs), torch.as_tensor(X_sim)
+        else:
+            return torch.as_tensor(X_obs)
 
     def run_inference(
             self,
@@ -93,6 +115,7 @@ class sbiModel:
             num_workers: int,
             num_samples: int
     ):
+
         self.posterior, self.simulations, self.simulation_params, self.density_estimator = infer_main(
             simulator=self.simulation_wrapper,
             prior=self.priors,
@@ -100,28 +123,92 @@ class sbiModel:
             num_simulations=num_simulations,
             num_workers=num_workers
         )
-        self.posterior.set_default_x(torch.as_tensor(np.squeeze(self.obs["x_obs"])))
+        self.posterior.set_default_x(self.obs["x_obs"])
         self.posterior_samples = self.posterior.sample(sample_shape=(num_samples,))
-        self.log_prob = self.posterior.log_prob(self.posterior_samples)
-
-        # return self.posterior, self.posterior_samples, self.simulations, self.simulation_params, self.density_estimator
 
     def simulations_from_samples(self, n):
-        X_pp = []
+        X_posterior_predictive = []
+        X_simulated = []
         for sample in tqdm(self.posterior_samples[::n]):
             sample = np.asarray(sample)
-            X = self.simulation_wrapper(params=sample)
-            X_pp.append(np.asarray(X))
+            X_obs, X_sim = self.simulation_wrapper(params=sample, return_sim=True)
 
-        X_pp = np.asarray(X_pp)
-        return X_pp
+            X_posterior_predictive.append(X_obs)
+            X_simulated.append(X_sim)
+
+        # X_posterior_predictive = np.asarray(X_posterior_predictive)
+        # X_simulated = np.asarray(X_simulated)
+        return torch.stack(X_posterior_predictive), torch.stack(X_simulated)
 
     def get_sample(self):
-        return self.posterior.sample((1,)).numpy()
+        return self.posterior.sample((1,))
 
     def get_map_estimator(self):
         self.map_estimator = self.posterior.map(show_progress_bars=False)
         return self.map_estimator
+
+    def to_arviz_data(self):
+        X_posterior_predictive, X_simulated = self.simulations_from_samples(n=1)
+
+        epsilon = self.posterior_samples[:, [i for (i, key) in self.prior_keys if key == "epsilon"][0]]
+        log_probability = self.log_probability(X_posterior_predictive, X_simulated, sigma=epsilon)
+
+        self.inference_data = az.from_dict(
+            posterior=dict(zip([key for i, key in self.prior_keys], np.asarray(self.posterior_samples.T))),
+            posterior_predictive={"x_obs": X_posterior_predictive.numpy().reshape((1, len(self.posterior_samples), *self.shape), order="F")},
+            log_likelihood={"x_obs": log_probability.numpy().reshape((1, len(self.posterior_samples), *self.shape), order="F")},
+            observed_data={"x_obs": self.obs["x_obs"].numpy().reshape(self.shape)}
+        )
+
+        return self.inference_data
+
+    def log_probability(self, X_pp: torch.Tensor, X_sim: torch.Tensor, sigma: Union[float, torch.Tensor]):
+
+        if X_pp.ndim > 1 and X_sim.ndim > 1:
+            logp = []
+            for i, (x_sim, x_pp) in enumerate(zip(X_sim, X_pp)):
+                mu = x_sim
+                sig = sigma if isinstance(sigma, float) else sigma[i]
+                logp_ = -math.log(sig * math.sqrt(2. * math.pi)) - ((x_pp - mu) / sig) ** 2 / 2.
+                logp_ = torch.as_tensor(logp_.numpy().reshape(self.shape, order="F"))
+
+                logp.append(logp_)
+
+            logp = torch.stack(logp)
+
+        else:
+            mu = X_sim
+            assert type(sigma) == float
+            sig = sigma
+
+            logp = -math.log(sig * math.sqrt(2. * math.pi)) - ((X_pp - mu) / sig) ** 2 / 2.
+            logp = torch.as_tensor(logp.numpy().reshape(self.shape, order="F"))
+
+        return logp
+
+    def information_criteria(self):
+        if self.inference_data is None:
+            self.inference_data = self.to_arviz_data()
+
+        waic = az.waic(self.inference_data, scale="deviance")
+        loo = az.loo(self.inference_data, scale="deviance")
+
+        return {"WAIC": waic.waic, "LOO": loo.loo}
+
+    def plot_posterior(self, init_params: Dict[str, float]):
+        num_params = self.posterior_samples.shape[1]
+        nrows = int(np.ceil(np.sqrt(num_params)))
+        ncols = int(np.ceil(num_params / nrows))
+
+        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(20, 16))
+        for index, ax in enumerate(axes.reshape(-1)):
+            try:
+                ax.hist(np.asarray(self.posterior_samples[:, index]), bins=100)
+                key = [key for i, key in self.prior_keys if i == index][0]
+                ax.axvline(init_params[key], color="r")
+                ax.set_title(key)
+            except IndexError:
+                fig.delaxes(ax)
 
 
 def infer_main(
