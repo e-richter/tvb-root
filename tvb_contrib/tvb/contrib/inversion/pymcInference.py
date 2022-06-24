@@ -7,6 +7,7 @@ import theano
 import theano.tensor as tt
 import arviz as az
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 class NonCenteredModel:
@@ -16,6 +17,7 @@ class NonCenteredModel:
 
         self.priors = None
         self.consts = None
+        self.params = None
         self.obs = None
         self.dt = None
         self.noise = None
@@ -39,8 +41,13 @@ class NonCenteredModel:
     ):
         self.priors = priors
         self.consts = consts
+        self.params = {**self.priors, **self.consts}
         self.obs = obs
         with self.pymc_model:
+
+            # for key, value in self.params.items():
+            #     if isinstance(value, np.ndarray):
+            #         self.params[key] = theano.shared(value, name=key)
 
             self.dt = theano.shared(time_step, name="dt")
             self.noise = noise
@@ -53,8 +60,7 @@ class NonCenteredModel:
             x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=epsilon, shape=tuple(shape), observed=self.obs["x_obs"])
 
     def scheme(self, x_eta, x_prev):
-        x_next = x_prev + self.dt * self.model_instance.theano_dfun(x_prev, {**self.priors, **self.consts}) + tt.sqrt(self.dt) * x_eta * self.noise
-
+        x_next = x_prev + self.dt * self.model_instance.pymc_dfun(x_prev, self.params) + tt.sqrt(self.dt) * x_eta * self.noise
         return x_next
 
     def run_inference(self, draws, tune, cores, target_accept):
@@ -69,10 +75,10 @@ class NonCenteredModel:
     def model_criteria(self, criteria: List[str]):
         out = dict()
         if "WAIC" in criteria:
-            waic = az.waic(self.inference_data)
+            waic = az.waic(self.inference_data, scale="deviance")
             out["WAIC"] = waic.waic
         if "LOO" in criteria:
-            loo = az.loo(self.inference_data)
+            loo = az.loo(self.inference_data, scale="deviance")
             out["LOO"] = loo.loo
 
         map_estimate = None
@@ -92,6 +98,22 @@ class NonCenteredModel:
                 out["BIC"] = bic
 
         return out
+
+    def plot_posterior(self, init_params: Dict[str, float]):
+        num_params = len([key for key, value in self.priors.items() if not isinstance(value, np.ndarray)])
+        nrows = int(np.ceil(np.sqrt(num_params)))
+        ncols = int(np.ceil(num_params / nrows))
+
+        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(20, 16))
+        for i, (key, value) in enumerate(self.priors.items()):
+            if isinstance(value, np.ndarray):
+                continue
+
+            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            ax = axes.reshape(-1)[i]
+            ax.hist(posterior_, bins=100)
+            ax.axvline(init_params[key], color="r")
+            ax.set_title(key)
 
 
 class CenteredModel:
@@ -138,7 +160,7 @@ class CenteredModel:
             x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=epsilon, shape=tuple(shape), observed=self.obs["x_obs"])
 
     def scheme(self, x_prev):
-        x_next = x_prev + self.dt * self.model_instance.theano_dfun(x_prev, {**self.priors, **self.consts})
+        x_next = x_prev + self.dt * self.model_instance.pymc_dfun(x_prev, {**self.priors, **self.consts})
         return x_next
 
     def run_inference(self, draws, tune, cores, target_accept):
@@ -176,6 +198,22 @@ class CenteredModel:
                 out["BIC"] = bic
 
         return out
+
+    def plot_posterior(self, init_params: Dict[str, float]):
+        num_params = len([key for key, value in self.priors.items() if not isinstance(value, np.ndarray)])
+        nrows = int(np.ceil(np.sqrt(num_params)))
+        ncols = int(np.ceil(num_params / nrows))
+
+        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(20, 16))
+        for i, (key, value) in enumerate(self.priors.items()):
+            if isinstance(value, np.ndarray):
+                continue
+
+            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            ax = axes.reshape(-1)[i]
+            ax.hist(posterior_, bins=100)
+            ax.axvline(init_params[key], color="r")
+            ax.set_title(key)
 
 
 class EulerMaruyamaModel:
@@ -222,5 +260,3 @@ class EulerMaruyamaModel:
             self.inference_data = az.from_pymc3(trace=trace, posterior_predictive=posterior_predictive)
 
         return self.inference_data
-
-
