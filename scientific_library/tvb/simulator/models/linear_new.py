@@ -81,8 +81,8 @@ class Linear(Model):
     cvar = numpy.array([0], dtype=numpy.int32)
     statistical_model = None
 
-    def to_StatsModel(self, **kwargs):
-        self.statistical_model = StatisticalModel(self, **kwargs)
+    # def to_StatsModel(self, **kwargs):
+    #     self.statistical_model = StatisticalModel(self, **kwargs)
 
     def dfun(self, state, coupling, local_coupling=0.0):
         """
@@ -95,7 +95,7 @@ class Linear(Model):
         return numpy.array([dx])
 
     @staticmethod
-    def theano_dfun(state, params: dict):
+    def pymc_dfun(state, params: dict):
         return params["gamma"] * state + params["coupling"] + params["local_coupling"] * state
 
     # @staticmethod
