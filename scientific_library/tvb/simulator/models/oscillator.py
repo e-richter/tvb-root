@@ -30,6 +30,8 @@
 Oscillator models.
 
 """
+import theano
+import theano.tensor as tt
 
 from .base import Model, ModelNumbaDfun
 import numpy
@@ -384,6 +386,35 @@ class Generic2dOscillator(ModelNumbaDfun):
         deriv = _numba_dfun_g2d(vw_, c_, self.tau, self.I, self.a, self.b, self.c, self.d, self.e, self.f, self.g,
                                 self.beta, self.alpha, self.gamma, lc_0)
         return deriv.T[..., numpy.newaxis]
+
+    @staticmethod
+    def pymc_dfun(state, params):
+        lc_0 = params["local_coupling"] * state[0, :, 0]
+        vw_ = state
+        c_ = params["coupling"].reshape(params["coupling"].shape[:-1])
+
+        V = vw_[0]
+        V2 = V * V
+        W = vw_[1]
+
+        # TODO: find way to use numba guvectorize for calculation
+        dx_v = params["d"] * params["tau"] * (
+                params["alpha"] * W - params["f"] * V2 * V + params["e"] * V2 + params["g"] * V + params["gamma"] * params["I"] + params["gamma"] * c_[0] + lc_0)
+        dx_w = params["d"] * (params["a"] + params["b"] * V + params["c"] * V2 - params["beta"] * W) / params["tau"]
+
+        # dx_v.tag.test_value = numpy.ones([1, 1])
+        # dx_w.tag.test_value = numpy.ones([1, 1])
+
+        dx = tt.stack([dx_v, dx_w], axis=0)
+
+        return dx
+
+        # inputs = [value for _, value in params.items() if not isinstance(value, numpy.ndarray)]
+        #
+        # deriv = theano.function(inputs=inputs,
+        #                         outputs=_numba_dfun_g2d(vw_, c_, params["tau"], params["I"], params["a"], params["b"], params["c"], params["d"], params["e"], params["f"], params["g"],
+        #                                                 params["beta"], params["alpha"], params["gamma"], lc_0))
+        # return deriv.T[..., numpy.newaxis]
 
 
 @guvectorize([(float64[:],) * 16], '(n),(m)' + ',()' * 13 + '->(n)', nopython=True)
