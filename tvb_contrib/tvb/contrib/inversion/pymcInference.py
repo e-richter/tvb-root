@@ -8,12 +8,14 @@ import theano.tensor as tt
 import arviz as az
 import numpy as np
 import matplotlib.pyplot as plt
+from datetime import datetime
 
 
 class NonCenteredModel:
     def __init__(self, model_instance: Model):
         self.model_instance = model_instance
         self.pymc_model = pm.Model()
+        self.run_id = datetime.now().strftime("%Y-%m-%d_%H%M")
 
         self.priors = None
         self.consts = None
@@ -44,10 +46,6 @@ class NonCenteredModel:
         self.params = {**self.priors, **self.consts}
         self.obs = obs
         with self.pymc_model:
-
-            # for key, value in self.params.items():
-            #     if isinstance(value, np.ndarray):
-            #         self.params[key] = theano.shared(value, name=key)
 
             self.dt = theano.shared(time_step, name="dt")
             self.noise = noise
@@ -100,12 +98,12 @@ class NonCenteredModel:
         return out
 
     def plot_posterior(self, init_params: Dict[str, float]):
-        num_params = len([key for key, value in self.priors.items() if not isinstance(value, np.ndarray)])
+        num_params = len(init_params)
         nrows = int(np.ceil(np.sqrt(num_params)))
         ncols = int(np.ceil(num_params / nrows))
 
         fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(20, 16))
-        for i, (key, value) in enumerate(self.priors.items()):
+        for i, (key, value) in enumerate(init_params.items()):
             if isinstance(value, np.ndarray):
                 continue
 
