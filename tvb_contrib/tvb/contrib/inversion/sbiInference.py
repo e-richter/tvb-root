@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 import math
@@ -5,6 +6,8 @@ import matplotlib.pyplot as plt
 import arviz as az
 from typing import Dict, List, Callable, Tuple, Union
 from tqdm import tqdm
+from datetime import datetime
+from pathlib import Path
 
 import sbi.inference
 from sbi import utils as sbi_utils
@@ -29,6 +32,7 @@ class sbiModel:
             priors: Dict[str, List],
             obs_shape: Union[Tuple, List]
     ):
+        self.run_id = datetime.now().strftime("%Y-%m-%d_%H%M")
         # self.simulator_instance = simulator_instance
         self.integrator_instance = integrator_instance
         self.model_instance = model_instance
@@ -147,7 +151,7 @@ class sbiModel:
         self.map_estimator = self.posterior.map(show_progress_bars=False)
         return self.map_estimator
 
-    def to_arviz_data(self):
+    def to_arviz_data(self, save=False):
         X_posterior_predictive, X_simulated = self.simulations_from_samples(n=1)
 
         epsilon = self.posterior_samples[:, [i for (i, key) in self.prior_keys if key == "epsilon"][0]]
@@ -157,7 +161,7 @@ class sbiModel:
             posterior=dict(zip([key for i, key in self.prior_keys], np.asarray(self.posterior_samples.T))),
             posterior_predictive={"x_obs": X_posterior_predictive.numpy().reshape((1, len(self.posterior_samples), *self.shape), order="F")},
             log_likelihood={"x_obs": log_probability.numpy().reshape((1, len(self.posterior_samples), *self.shape), order="F")},
-            observed_data={"x_obs": self.obs["x_obs"].numpy().reshape(self.shape)}
+            observed_data={"x_obs": self.obs["x_obs"].numpy().reshape(self.shape, order="F")}
         )
 
         return self.inference_data
@@ -196,19 +200,22 @@ class sbiModel:
         return {"WAIC": waic.waic, "LOO": loo.loo}
 
     def plot_posterior(self, init_params: Dict[str, float]):
-        num_params = self.posterior_samples.shape[1]
-        nrows = int(np.ceil(np.sqrt(num_params)))
-        ncols = int(np.ceil(num_params / nrows))
+        if self.inference_data is None:
+            self.inference_data = self.to_arviz_data()
 
-        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(20, 16))
-        for index, ax in enumerate(axes.reshape(-1)):
-            try:
-                ax.hist(np.asarray(self.posterior_samples[:, index]), bins=100)
-                key = [key for i, key in self.prior_keys if i == index][0]
-                ax.axvline(init_params[key], color="r")
-                ax.set_title(key)
-            except IndexError:
-                fig.delaxes(ax)
+        num_params = len(init_params)
+        ncols = int(np.ceil(np.sqrt(num_params)))
+        nrows = int(np.ceil(num_params / ncols))
+
+        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(30, 16))
+        for i, (key, value) in enumerate(init_params.items()):
+            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            ax = axes.reshape(-1)[i]
+            ax.hist(posterior_, bins=100)
+            ax.axvline(init_params[key], color="r")
+            ax.set_title(key)
+
+        plt.savefig(f"sbi_data/figures/{self.run_id}_posterior_samples.png", dpi=600, bbox_inches=None)
 
 
 def infer_main(
