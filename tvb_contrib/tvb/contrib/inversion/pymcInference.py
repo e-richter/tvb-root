@@ -97,7 +97,7 @@ class NonCenteredModel:
 
         return out
 
-    def plot_posterior(self, init_params: Dict[str, float]):
+    def plot_posterior_samples(self, init_params: Dict[str, float], save: bool = False):
         num_params = len(init_params)
         nrows = int(np.ceil(np.sqrt(num_params)))
         ncols = int(np.ceil(num_params / nrows))
@@ -112,6 +112,9 @@ class NonCenteredModel:
             ax.hist(posterior_, bins=100)
             ax.axvline(init_params[key], color="r")
             ax.set_title(key)
+
+        if save:
+            plt.savefig(f"pymc_data/figures/{self.run_id}_posterior_samples.png", dpi=600, bbox_inches=None)
 
 
 class CenteredModel:
@@ -173,10 +176,10 @@ class CenteredModel:
     def model_criteria(self, criteria: List[str]):
         out = dict()
         if "WAIC" in criteria:
-            waic = az.waic(self.inference_data)
+            waic = az.waic(self.inference_data, scale="deviance")
             out["WAIC"] = waic.waic
         if "LOO" in criteria:
-            loo = az.loo(self.inference_data)
+            loo = az.loo(self.inference_data, scale="deviance")
             out["LOO"] = loo.loo
 
         map_estimate = None
