@@ -40,50 +40,18 @@ class sbiModel:
         self.model_instance = model_instance
         self.method = method
         self.obs = obs
-
-        prior_mean = [value[0] for _, value in priors.items()]
-        prior_sd = [value[1] for _, value in priors.items()]
-        self.prior_keys = [(i, key, value[-1]) for i, (key, value) in enumerate(priors.items())]
-
-        prior_loc = []
-        prior_scale = []
-        for mean, sd, key in zip(prior_mean, prior_sd, self.prior_keys):
-            if key[-1]:
-                prior_loc.append(torch.as_tensor(mean * np.ones(obs.size)))
-                prior_scale.append(torch.as_tensor(sd * np.ones(obs.size)))
-            else:
-                prior_loc.append(torch.as_tensor(np.array([mean])))
-                prior_scale.append(torch.as_tensor(np.array([sd])))
-
-        prior_loc = torch.cat(prior_loc)
-        prior_scale = torch.diag(torch.cat(prior_scale))
-
-        self.priors = torch.distributions.MultivariateNormal(
-            loc=prior_loc,
-            scale_tril=prior_scale
-        )
         self.shape = tuple(obs_shape)
+        self.priors = self._set_priors(priors=priors)
 
         self.posterior = None
         self.posterior_samples = None
-        self.simulations = None
-        self.simulation_params = None
+        # self.simulations = None
+        # self.simulation_params = None
         self.density_estimator = None
         self.map_estimator = None
         self.inference_data = None
 
     def simulation_wrapper(self, params, return_sim=False):
-
-        # for i, param in enumerate(params):
-        #     self.simulator_instance.model.__dict__[self.simulator_instance.model.parameter_names[i]] = np.asarray(param)
-        #
-        # self.simulator_instance.configure()
-        # X = self.simulator_instance.run()
-        #
-        # return torch.as_tensor(X)
-
-        # for i, param in enumerate(params):
-        #     self.model_instance.__dict__[self.model_instance.parameter_names[i]] = np.asarray(param)
 
         for (i, key, _) in self.prior_keys:
             if key in ("noise", "epsilon", "x_t"):
@@ -92,7 +60,7 @@ class sbiModel:
 
         # noise = params[[i for (i, key, _) in self.prior_keys if key == "noise"][0]]
         epsilon = params[[i for (i, key, _) in self.prior_keys if key == "epsilon"][0]]
-        x_t = params[[i for (i, key, _) in self.prior_keys if key == "x_t"][0]:]
+        # x_t = params[[i for (i, key, _) in self.prior_keys if key == "x_t"][0]:]
 
         self.model_instance.configure()
         self.integrator_instance.noise.nsig = np.array([0.003])
@@ -105,7 +73,7 @@ class sbiModel:
         simulation_length = 300
         stimulus = 0.0
         local_coupling = 0.0
-        current_state = np.random.uniform(low=-1.0, high=1.0, size=self.shape[1:])
+        current_state = np.random.uniform(low=-2.0, high=2.0, size=self.shape[1:])
         state = current_state
         current_step = 0
         number_of_nodes = 1
@@ -120,18 +88,17 @@ class sbiModel:
 
         x_sim = np.asarray(X)  # [int(simulation_length / self.integrator_instance.dt * 0.2):]
         # reshape output to be used by sbi TODO: eventually adjust when multiple nodes are simulated (shape[2]>1)
-        x_sim = x_sim.reshape(x_sim.size, order="F")
+        x_sim = torch.as_tensor(x_sim.reshape(x_sim.size, order="F"))
 
-        x_hat = torch.as_tensor(x_sim) + x_t
-        x_obs = torch.distributions.MultivariateNormal(
-            loc=x_hat,
-            scale_tril=torch.diag(torch.as_tensor(float(epsilon) * np.ones(x_hat.numpy().size)))
+        x_obs = x_sim + torch.distributions.MultivariateNormal(
+            loc=torch.as_tensor(np.zeros(x_sim.numpy().size)),
+            scale_tril=torch.diag(torch.as_tensor(epsilon * np.ones(x_sim.numpy().size)))
         ).sample()
 
         if return_sim:
-            return torch.as_tensor(x_obs), torch.as_tensor(x_hat)
+            return x_obs, x_sim
         else:
-            return torch.as_tensor(x_obs)
+            return x_obs
 
     def run_inference(
             self,
@@ -139,7 +106,7 @@ class sbiModel:
             num_workers: int,
             num_samples: int
     ):
-        self.posterior, self.simulations, self.simulation_params, self.density_estimator = infer_main(
+        self.posterior, self.density_estimator = infer_main(
             simulator=self.simulation_wrapper,
             prior=self.priors,
             method=self.method,
@@ -173,14 +140,14 @@ class sbiModel:
     def to_arviz_data(self, save: bool = False):
         X_posterior_predictive, X_simulated = self.simulations_from_samples(n=1)
 
-        epsilon = self.posterior_samples[:, [i for (i, key) in self.prior_keys if key == "epsilon"][0]]
+        epsilon = self.posterior_samples[:, [i for (i, key, _) in self.prior_keys if key == "epsilon"][0]]
         log_probability = self.log_probability(X_posterior_predictive, X_simulated, sigma=epsilon)
 
         self.inference_data = az.from_dict(
-            posterior=dict(zip([key for i, key in self.prior_keys], np.asarray(self.posterior_samples.T))),
+            posterior=dict(zip([key for i, key, _ in self.prior_keys], np.asarray(self.posterior_samples.T))),
             posterior_predictive={"x_obs": X_posterior_predictive.numpy().reshape((1, len(self.posterior_samples), *self.shape), order="F")},
             log_likelihood={"x_obs": log_probability.numpy().reshape((1, len(self.posterior_samples), *self.shape), order="F")},
-            observed_data={"x_obs": self.obs["x_obs"].numpy().reshape(self.shape, order="F")}
+            observed_data={"x_obs": self.obs.reshape(self.shape, order="F")}
         )
 
         if save:
@@ -249,6 +216,34 @@ class sbiModel:
             tmp = pickle.load(out)
             self.__dict__.update(tmp)
 
+    def _set_priors(self, priors):
+
+        # if dist == "Normal":
+        #     prior_mean = [value[0] for _, value in priors.items()]
+        #     prior_sd = [value[1] for _, value in priors.items()]
+        #     self.prior_keys = [(i, key, value[-1]) for i, (key, value) in enumerate(priors.items())]
+        #
+        #     prior_loc = []
+        #     prior_scale = []
+        #     for mean, sd, key in zip(prior_mean, prior_sd, self.prior_keys):
+        #         if key[-1]:
+        #             prior_loc.append(torch.as_tensor(mean * np.ones(self.obs.size)))
+        #             prior_scale.append(torch.as_tensor(sd * np.ones(self.obs.size)))
+        #         else:
+        #             prior_loc.append(torch.as_tensor(np.array([mean])))
+        #             prior_scale.append(torch.as_tensor(np.array([sd])))
+        #
+        #     prior_loc = torch.cat(prior_loc)
+        #     prior_scale = torch.diag(torch.cat(prior_scale))
+        #
+        #     return torch.distributions.MultivariateNormal(loc=prior_loc, scale_tril=prior_scale)
+
+        prior_min = [value[0] for _, value in priors.items()]
+        prior_max = [value[1] for _, value in priors.items()]
+        self.prior_keys = [(i, key, value[-1]) for i, (key, value) in enumerate(priors.items())]
+
+        return sbi_utils.torchutils.BoxUniform(low=torch.as_tensor(prior_min), high=torch.as_tensor(prior_max))
+
 
 def infer_main(
         simulator: Callable,
@@ -279,4 +274,4 @@ def infer_main(
     else:
         posterior = inference.build_posterior(mcmc_method="nuts")
 
-    return posterior, x, theta, density_estimator
+    return posterior, density_estimator
