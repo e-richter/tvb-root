@@ -409,13 +409,6 @@ class Generic2dOscillator(ModelNumbaDfun):
 
         return dx
 
-        # inputs = [value for _, value in params.items() if not isinstance(value, numpy.ndarray)]
-        #
-        # deriv = theano.function(inputs=inputs,
-        #                         outputs=_numba_dfun_g2d(vw_, c_, params["tau"], params["I"], params["a"], params["b"], params["c"], params["d"], params["e"], params["f"], params["g"],
-        #                                                 params["beta"], params["alpha"], params["gamma"], lc_0))
-        # return deriv.T[..., numpy.newaxis]
-
 
 @guvectorize([(float64[:],) * 16], '(n),(m)' + ',()' * 13 + '->(n)', nopython=True)
 def _numba_dfun_g2d(vw, c_0, tau, I, a, b, c, d, e, f, g, beta, alpha, gamma, lc_0, dx):
