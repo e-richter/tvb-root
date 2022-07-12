@@ -4,11 +4,13 @@ from pymc3.model import FreeRV, TransformedRV, DeterministicWrapper
 from pymc3.distributions.timeseries import EulerMaruyama
 import pymc3 as pm
 import theano
+import aesara
 import theano.tensor as tt
 import arviz as az
 import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime
+import pickle
 
 
 class NonCenteredModel:
@@ -32,7 +34,7 @@ class NonCenteredModel:
             self,
             priors: Dict[str, Union[FreeRV, TransformedRV, DeterministicWrapper]],
             consts: Dict[str, float],
-            obs: Dict,
+            obs: np.ndarray,
             time_step: float,
             x_init: Union[FreeRV, TransformedRV],
             noise: Union[FreeRV, TransformedRV],
@@ -55,18 +57,21 @@ class NonCenteredModel:
 
             x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_sim + offset)
 
-            x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=epsilon, shape=tuple(shape), observed=self.obs["x_obs"])
+            x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=epsilon, shape=tuple(shape), observed=self.obs)
 
     def scheme(self, x_eta, x_prev):
         x_next = x_prev + self.dt * self.model_instance.pymc_dfun(x_prev, self.params) + tt.sqrt(self.dt) * x_eta * self.noise
         return x_next
 
-    def run_inference(self, draws, tune, cores, target_accept):
+    def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, save: bool = False):
         with self.pymc_model:
             self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept)
             posterior_predictive = pm.sample_posterior_predictive(trace=self.trace)
             self.inference_data = az.from_pymc3(trace=self.trace, posterior_predictive=posterior_predictive)
             self.summary = az.summary(self.inference_data)
+
+            if save:
+                self.inference_data.to_netcdf(filename=f"pymc_data/inference_data/{self.run_id}_inference_data.nc", compress=False)
 
         return self.inference_data
 
@@ -115,6 +120,15 @@ class NonCenteredModel:
 
         if save:
             plt.savefig(f"pymc_data/figures/{self.run_id}_posterior_samples.png", dpi=600, bbox_inches=None)
+
+    def save(self):
+        with open(f"pymc_data/inference_data/{self.run_id}_instance.pkl", "wb") as out:
+            pickle.dump(self.__dict__, out, pickle.HIGHEST_PROTOCOL)
+
+    def load(self, pkl_file):
+        with open(f"pymc_data/inference_data/{pkl_file}", "rb") as out:
+            tmp = pickle.load(out)
+            self.__dict__.update(tmp)
 
 
 class CenteredModel:
