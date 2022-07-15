@@ -402,8 +402,8 @@ class Generic2dOscillator(ModelNumbaDfun):
                 params["alpha"] * W - params["f"] * V2 * V + params["e"] * V2 + params["g"] * V + params["gamma"] * params["I"] + params["gamma"] * c_[0] + lc_0)
         dx_w = params["d"] * (params["a"] + params["b"] * V + params["c"] * V2 - params["beta"] * W) / params["tau"]
 
-        # dx_v.tag.test_value = numpy.ones([1, 1])
-        # dx_w.tag.test_value = numpy.ones([1, 1])
+        # dx_v.tag.test_value = numpy.ones([1,])
+        # dx_w.tag.test_value = numpy.ones([1,])
 
         dx = tt.stack([dx_v, dx_w], axis=0)
 
