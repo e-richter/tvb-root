@@ -151,7 +151,7 @@ class sbiModel:
         )
 
         if save:
-            self.inference_data.to_netcdf(filename=f"sbi_data/inference_data/{self.run_id}_inference_data.nc", compress=False)
+            self.inference_data.to_netcdf(filename=f"sbi_data/inference_data/{self.run_id}_{self.method}_inference_data.nc", compress=False)
 
         return self.inference_data
 
@@ -183,12 +183,12 @@ class sbiModel:
         if self.inference_data is None:
             self.inference_data = self.to_arviz_data()
 
-        waic = az.waic(self.inference_data, scale="deviance")
-        loo = az.loo(self.inference_data, scale="deviance")
+        waic = az.waic(self.inference_data)
+        loo = az.loo(self.inference_data)
 
         return {"WAIC": waic.waic, "LOO": loo.loo}
 
-    def plot_posterior_samples(self, init_params: Dict[str, float], save: bool = False):
+    def plot_posterior_samples(self, init_params: Dict[str, float], bins: int = 100, save: bool = False):
         if self.inference_data is None:
             self.inference_data = self.to_arviz_data()
 
@@ -200,7 +200,7 @@ class sbiModel:
         for i, (key, value) in enumerate(init_params.items()):
             posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
             ax = axes.reshape(-1)[i]
-            ax.hist(posterior_, bins=100)
+            ax.hist(posterior_, bins=bins)
             ax.axvline(init_params[key], color="r")
             ax.set_title(key)
 

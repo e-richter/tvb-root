@@ -4,7 +4,6 @@ from pymc3.model import FreeRV, TransformedRV, DeterministicWrapper
 from pymc3.distributions.timeseries import EulerMaruyama
 import pymc3 as pm
 import theano
-import aesara
 import theano.tensor as tt
 import arviz as az
 import numpy as np
@@ -37,10 +36,11 @@ class NonCenteredModel:
             obs: np.ndarray,
             time_step: float,
             x_init: Union[FreeRV, TransformedRV],
-            noise: Union[FreeRV, TransformedRV],
+            x_t: Union[FreeRV, TransformedRV],
+            dyn_noise: Union[FreeRV, TransformedRV],
             amplitude: Union[FreeRV, TransformedRV],
             offset: Union[FreeRV, TransformedRV],
-            epsilon: Union[FreeRV, TransformedRV],
+            obs_noise: Union[FreeRV, TransformedRV],
             shape: Union[Tuple, List]
     ):
         self.priors = priors
@@ -50,14 +50,13 @@ class NonCenteredModel:
         with self.pymc_model:
 
             self.dt = theano.shared(time_step, name="dt")
-            self.noise = noise
+            self.noise = dyn_noise
 
-            x_t = pm.Normal(name="x_t", mu=0.0, sd=1.0, shape=tuple(shape))
             x_sim, updates = theano.scan(fn=self.scheme, sequences=[x_t], outputs_info=[x_init], n_steps=shape[0])
 
             x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_sim + offset)
 
-            x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=epsilon, shape=tuple(shape), observed=self.obs)
+            x_obs = pm.Normal(name="x_obs", mu=x_sim, sd=obs_noise, shape=tuple(shape), observed=self.obs)
 
     def scheme(self, x_eta, x_prev):
         x_next = x_prev + self.dt * self.model_instance.pymc_dfun(x_prev, self.params) + tt.sqrt(self.dt) * x_eta * self.noise
@@ -78,10 +77,10 @@ class NonCenteredModel:
     def model_criteria(self, criteria: List[str]):
         out = dict()
         if "WAIC" in criteria:
-            waic = az.waic(self.inference_data, scale="deviance")
+            waic = az.waic(self.inference_data)
             out["WAIC"] = waic.waic
         if "LOO" in criteria:
-            loo = az.loo(self.inference_data, scale="deviance")
+            loo = az.loo(self.inference_data)
             out["LOO"] = loo.loo
 
         map_estimate = None
