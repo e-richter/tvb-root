@@ -1,4 +1,6 @@
 import os
+import time
+
 import numpy as np
 import torch
 import math
@@ -9,6 +11,7 @@ from tqdm import tqdm
 from datetime import datetime
 from pathlib import Path
 import pickle
+from copy import deepcopy
 
 import sbi.inference
 from sbi import utils as sbi_utils
@@ -26,18 +29,18 @@ from tvb.simulator.models.base import Model
 class sbiModel:
     def __init__(
             self,
-            # simulator_instance: Simulator,
-            integrator_instance: Integrator,
-            model_instance: Model,
+            simulator_instance: Simulator,
+            # integrator_instance: Integrator,
+            # model_instance: Model,
             method: str,
             obs: np.ndarray,
             priors: Dict[str, List],
             obs_shape: Union[Tuple, List]
     ):
         self.run_id = datetime.now().strftime("%Y-%m-%d_%H%M")
-        # self.simulator_instance = simulator_instance
-        self.integrator_instance = integrator_instance
-        self.model_instance = model_instance
+        self.simulator_instance = simulator_instance
+        # self.integrator_instance = integrator_instance
+        # self.model_instance = model_instance
         self.method = method
         self.obs = obs
         self.shape = tuple(obs_shape)
@@ -45,60 +48,89 @@ class sbiModel:
 
         self.posterior = None
         self.posterior_samples = None
-        # self.simulations = None
-        # self.simulation_params = None
+        self.simulations = None
+        self.simulation_params = None
         self.density_estimator = None
         self.map_estimator = None
         self.inference_data = None
 
     def simulation_wrapper(self, params, return_sim=False):
 
+        sim_ = deepcopy(self.simulator_instance)
+
         for (i, key, _) in self.prior_keys:
-            if key in ("noise", "epsilon", "x_t"):
+            if key == "epsilon":
                 continue
-            self.model_instance.__dict__[key] = np.asarray(params[i])
+            sim_.model.__dict__[key] = np.asarray(params[i])
 
-        # noise = params[[i for (i, key, _) in self.prior_keys if key == "noise"][0]]
+        sim_.configure()
+
         epsilon = params[[i for (i, key, _) in self.prior_keys if key == "epsilon"][0]]
-        # x_t = params[[i for (i, key, _) in self.prior_keys if key == "x_t"][0]:]
 
-        self.model_instance.configure()
-        self.integrator_instance.noise.nsig = np.array([0.003])
-        self.integrator_instance.noise.configure()
-        self.integrator_instance.noise.configure_white(dt=self.integrator_instance.dt)
-        self.integrator_instance.set_random_state(random_state=None)
-        self.integrator_instance.configure()
-        self.integrator_instance.configure_boundaries(self.model_instance)
+        (t, X), = sim_.run()
 
-        simulation_length = 300
-        stimulus = 0.0
-        local_coupling = 0.0
-        current_state = np.random.uniform(low=-2.0, high=2.0, size=self.shape[1:])
-        state = current_state
-        current_step = 0
-        number_of_nodes = 1
-        start_step = current_step + 1
-        node_coupling = np.zeros(self.shape[1:])
-        n_steps = int(math.ceil(simulation_length / self.integrator_instance.dt))
-
-        X = [current_state.copy()]
-        for step in range(start_step, start_step + n_steps):
-            state = self.integrator_instance.integrate(state, self.model_instance, node_coupling, local_coupling, stimulus)
-            X.append(state.copy())
-
-        x_sim = np.asarray(X)  # [int(simulation_length / self.integrator_instance.dt * 0.2):]
-        # reshape output to be used by sbi TODO: eventually adjust when multiple nodes are simulated (shape[2]>1)
-        x_sim = torch.as_tensor(x_sim.reshape(x_sim.size, order="F"))
+        x_sim = torch.as_tensor(X.reshape(X.size, order="F"))
 
         x_obs = x_sim + torch.distributions.MultivariateNormal(
             loc=torch.as_tensor(np.zeros(x_sim.numpy().size)),
             scale_tril=torch.diag(torch.as_tensor(epsilon * np.ones(x_sim.numpy().size)))
         ).sample()
 
+        del sim_
+
         if return_sim:
             return x_obs, x_sim
         else:
             return x_obs
+
+    # def simulation_wrapper_old(self, params, return_sim=False):
+    #
+    #     for (i, key, _) in self.prior_keys:
+    #         if key in ("noise", "epsilon", "x_t"):
+    #             continue
+    #         self.model_instance.__dict__[key] = np.asarray(params[i])
+    #
+    #     # noise = params[[i for (i, key, _) in self.prior_keys if key == "noise"][0]]
+    #     epsilon = params[[i for (i, key, _) in self.prior_keys if key == "epsilon"][0]]
+    #     # x_t = params[[i for (i, key, _) in self.prior_keys if key == "x_t"][0]:]
+    #
+    #     self.model_instance.configure()
+    #     self.integrator_instance.noise.nsig = np.array([0.003])
+    #     self.integrator_instance.noise.configure()
+    #     self.integrator_instance.noise.configure_white(dt=self.integrator_instance.dt)
+    #     self.integrator_instance.set_random_state(random_state=None)
+    #     self.integrator_instance.configure()
+    #     self.integrator_instance.configure_boundaries(self.model_instance)
+    #
+    #     simulation_length = 300
+    #     stimulus = 0.0
+    #     local_coupling = 0.0
+    #     current_state = np.random.uniform(low=-2.0, high=2.0, size=self.shape[1:])
+    #     state = current_state
+    #     current_step = 0
+    #     number_of_nodes = 1
+    #     start_step = current_step + 1
+    #     node_coupling = np.zeros(self.shape[1:])
+    #     n_steps = int(math.ceil(simulation_length / self.integrator_instance.dt))
+    #
+    #     X = [current_state.copy()]
+    #     for step in range(start_step, start_step + n_steps):
+    #         state = self.integrator_instance.integrate(state, self.model_instance, node_coupling, local_coupling, stimulus)
+    #         X.append(state.copy())
+    #
+    #     x_sim = np.asarray(X)  # [int(simulation_length / self.integrator_instance.dt * 0.2):]
+    #     # reshape output to be used by sbi TODO: eventually adjust when multiple nodes are simulated (shape[2]>1)
+    #     x_sim = torch.as_tensor(x_sim.reshape(x_sim.size, order="F"))
+    #
+    #     x_obs = x_sim + torch.distributions.MultivariateNormal(
+    #         loc=torch.as_tensor(np.zeros(x_sim.numpy().size)),
+    #         scale_tril=torch.diag(torch.as_tensor(epsilon * np.ones(x_sim.numpy().size)))
+    #     ).sample()
+    #
+    #     if return_sim:
+    #         return x_obs, x_sim
+    #     else:
+    #         return x_obs
 
     def run_inference(
             self,
@@ -106,7 +138,7 @@ class sbiModel:
             num_workers: int,
             num_samples: int
     ):
-        self.posterior, self.density_estimator = infer_main(
+        self.posterior, self.density_estimator, self.simulation_params, self.simulations = infer_main(
             simulator=self.simulation_wrapper,
             prior=self.priors,
             method=self.method,
@@ -268,10 +300,11 @@ def infer_main(
         num_simulations=num_simulations,
         num_workers=num_workers,
     )
+    print(theta.shape, x.shape)
     density_estimator = inference.append_simulations(theta, x).train()
     if method == "SNPE":
         posterior = inference.build_posterior()
     else:
         posterior = inference.build_posterior(mcmc_method="nuts")
 
-    return posterior, density_estimator
+    return posterior, density_estimator, theta, x
