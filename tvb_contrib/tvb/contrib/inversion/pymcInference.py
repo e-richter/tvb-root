@@ -16,6 +16,7 @@ class NonCenteredModel:
     def __init__(self, model_instance: Model):
         self.model_instance = model_instance
         self.pymc_model = pm.Model()
+
         self.run_id = datetime.now().strftime("%Y-%m-%d_%H%M")
 
         self.priors = None
@@ -36,10 +37,10 @@ class NonCenteredModel:
             obs: np.ndarray,
             time_step: float,
             x_init: Union[FreeRV, TransformedRV],
-            x_t: Union[FreeRV, TransformedRV],
+            time_series: Union[FreeRV, TransformedRV],
             dyn_noise: Union[FreeRV, TransformedRV],
-            amplitude: Union[FreeRV, TransformedRV],
-            offset: Union[FreeRV, TransformedRV],
+            # amplitude: Union[FreeRV, TransformedRV],
+            # offset: Union[FreeRV, TransformedRV],
             obs_noise: Union[FreeRV, TransformedRV],
             shape: Union[Tuple, List]
     ):
@@ -52,9 +53,9 @@ class NonCenteredModel:
             self.dt = theano.shared(time_step, name="dt")
             self.noise = dyn_noise
 
-            x_sim, updates = theano.scan(fn=self.scheme, sequences=[x_t], outputs_info=[x_init], n_steps=shape[0])
+            x_sim, updates = theano.scan(fn=self.scheme, sequences=[time_series], outputs_info=[x_init], n_steps=shape[0])
 
-            x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_sim + offset)
+            # x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_sim + offset)
 
             x_obs = pm.Normal(name="x_obs", mu=x_sim, sd=obs_noise, shape=tuple(shape), observed=self.obs)
 
