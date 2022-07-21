@@ -6,7 +6,7 @@ import torch
 import math
 import matplotlib.pyplot as plt
 import arviz as az
-from typing import Dict, List, Callable, Tuple, Union
+from typing import Dict, List, Callable, Tuple, Union, Literal
 from tqdm import tqdm
 from datetime import datetime
 from pathlib import Path
@@ -32,19 +32,22 @@ class sbiModel:
             simulator_instance: Simulator,
             # integrator_instance: Integrator,
             # model_instance: Model,
-            method: str,
+            method: Literal["SNPE", "SNLE", "SNRE"],
             obs: np.ndarray,
-            priors: Dict[str, List],
-            obs_shape: Union[Tuple, List]
+            prior_vars: Dict[str, List],
+            prior_dist: Literal["Normal", "Uniform"],
+            obs_shape: Union[Tuple, List],
+            neural_net: str = "maf"
     ):
         self.run_id = datetime.now().strftime("%Y-%m-%d_%H%M")
         self.simulator_instance = simulator_instance
         # self.integrator_instance = integrator_instance
         # self.model_instance = model_instance
         self.method = method
+        self.neural_net = neural_net
         self.obs = obs
         self.shape = tuple(obs_shape)
-        self.priors = self._set_priors(priors=priors)
+        self.priors = self._set_priors(prior_vars=prior_vars, prior_dist=prior_dist)
 
         self.posterior = None
         self.posterior_samples = None
@@ -138,10 +141,11 @@ class sbiModel:
             num_workers: int,
             num_samples: int
     ):
-        self.posterior, self.density_estimator, self.simulation_params, self.simulations = infer_main(
+        self.posterior, self.density_estimator = infer_main(
             simulator=self.simulation_wrapper,
             prior=self.priors,
             method=self.method,
+            neural_net=self.neural_net,
             num_simulations=num_simulations,
             num_workers=num_workers
         )
@@ -158,8 +162,6 @@ class sbiModel:
             X_posterior_predictive.append(X_obs)
             X_simulated.append(X_sim)
 
-        # X_posterior_predictive = np.asarray(X_posterior_predictive)
-        # X_simulated = np.asarray(X_simulated)
         return torch.stack(X_posterior_predictive), torch.stack(X_simulated)
 
     def get_sample(self):
@@ -248,39 +250,37 @@ class sbiModel:
             tmp = pickle.load(out)
             self.__dict__.update(tmp)
 
-    def _set_priors(self, priors):
+    def _set_priors(self, prior_vars, prior_dist):
 
-        # if dist == "Normal":
-        #     prior_mean = [value[0] for _, value in priors.items()]
-        #     prior_sd = [value[1] for _, value in priors.items()]
-        #     self.prior_keys = [(i, key, value[-1]) for i, (key, value) in enumerate(priors.items())]
-        #
-        #     prior_loc = []
-        #     prior_scale = []
-        #     for mean, sd, key in zip(prior_mean, prior_sd, self.prior_keys):
-        #         if key[-1]:
-        #             prior_loc.append(torch.as_tensor(mean * np.ones(self.obs.size)))
-        #             prior_scale.append(torch.as_tensor(sd * np.ones(self.obs.size)))
-        #         else:
-        #             prior_loc.append(torch.as_tensor(np.array([mean])))
-        #             prior_scale.append(torch.as_tensor(np.array([sd])))
-        #
-        #     prior_loc = torch.cat(prior_loc)
-        #     prior_scale = torch.diag(torch.cat(prior_scale))
-        #
-        #     return torch.distributions.MultivariateNormal(loc=prior_loc, scale_tril=prior_scale)
+        if prior_dist == "Normal":
+            prior_mean = [value[0] for _, value in prior_vars.items()]
+            prior_sd = [value[1] for _, value in prior_vars.items()]
+            self.prior_keys = [(i, key, value[-1]) for i, (key, value) in enumerate(prior_vars.items())]
 
-        prior_min = [value[0] for _, value in priors.items()]
-        prior_max = [value[1] for _, value in priors.items()]
-        self.prior_keys = [(i, key, value[-1]) for i, (key, value) in enumerate(priors.items())]
+            prior_loc = []
+            prior_scale = []
+            for mean, sd in zip(prior_mean, prior_sd):
+                prior_loc.append(torch.as_tensor(np.array([mean])))
+                prior_scale.append(torch.as_tensor(np.array([sd])))
 
-        return sbi_utils.torchutils.BoxUniform(low=torch.as_tensor(prior_min), high=torch.as_tensor(prior_max))
+            prior_loc = torch.cat(prior_loc)
+            prior_scale = torch.diag(torch.cat(prior_scale))
+
+            return torch.distributions.MultivariateNormal(loc=prior_loc, scale_tril=prior_scale)
+
+        elif prior_dist == "Uniform":
+            prior_min = [(value[0] - value[1]) for _, value in prior_vars.items()]
+            prior_max = [(value[0] + value[1]) for _, value in prior_vars.items()]
+            self.prior_keys = [(i, key, value[-1]) for i, (key, value) in enumerate(prior_vars.items())]
+
+            return sbi_utils.torchutils.BoxUniform(low=torch.as_tensor(prior_min), high=torch.as_tensor(prior_max))
 
 
 def infer_main(
         simulator: Callable,
         prior: Distribution,
         method: str,
+        neural_net: str,
         num_simulations: int,
         num_workers: int = 1
 ):
@@ -293,7 +293,7 @@ def infer_main(
 
     simulator, prior = prepare_for_sbi(simulator, prior)
 
-    inference = method_fun(prior=prior)
+    inference = method_fun(prior=prior, density_estimator=neural_net)
     theta, x = simulate_for_sbi(
         simulator=simulator,
         proposal=prior,
@@ -307,4 +307,4 @@ def infer_main(
     else:
         posterior = inference.build_posterior(mcmc_method="nuts")
 
-    return posterior, density_estimator, theta, x
+    return posterior, density_estimator
