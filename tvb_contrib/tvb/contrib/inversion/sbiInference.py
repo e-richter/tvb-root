@@ -12,11 +12,13 @@ from datetime import datetime
 from pathlib import Path
 import pickle
 from copy import deepcopy
+from joblib import Parallel, delayed
 
 import sbi.inference
 from sbi import utils as sbi_utils
 from sbi import analysis as sbi_analysis
 from sbi.inference.base import infer, simulate_for_sbi
+from sbi.simulators.simutils import tqdm_joblib
 from sbi.utils.user_input_checks import prepare_for_sbi
 from sbi.inference.posteriors.base_posterior import NeuralPosterior
 from torch.distributions import Distribution
@@ -68,7 +70,7 @@ class sbiModel:
 
         sim_.configure()
 
-        epsilon = params[[i for (i, key, _) in self.prior_keys if key == "epsilon"][0]]
+        epsilon = torch.abs(params[[i for (i, key, _) in self.prior_keys if key == "epsilon"][0]])
 
         (t, X), = sim_.run()
 
@@ -152,17 +154,27 @@ class sbiModel:
         self.posterior.set_default_x(torch.as_tensor(self.obs.reshape(self.obs.size, order="F")))
         self.posterior_samples = self.posterior.sample(sample_shape=(num_samples,))
 
-    def simulations_from_samples(self, n):
-        X_posterior_predictive = []
-        X_simulated = []
-        for sample in tqdm(self.posterior_samples[::n]):
-            sample = np.asarray(sample)
-            X_obs, X_sim = self.simulation_wrapper(params=sample, return_sim=True)
+    def simulations_from_samples(self, num_workers: int, n: int = 1):
+        theta = self.posterior_samples[::n]
 
-            X_posterior_predictive.append(X_obs)
-            X_simulated.append(X_sim)
+        X_posterior_predictive, X_simulated = simulate_in_batches_(
+            simulator=self.simulation_wrapper,
+            theta=theta,
+            num_workers=num_workers
+        )
 
-        return torch.stack(X_posterior_predictive), torch.stack(X_simulated)
+        return X_posterior_predictive, X_simulated
+
+        # X_posterior_predictive = []
+        # X_simulated = []
+        # for sample in tqdm(self.posterior_samples[::n]):
+        #     sample = np.asarray(sample)
+        #     X_obs, X_sim = self.simulation_wrapper(params=sample, return_sim=True)
+        #
+        #     X_posterior_predictive.append(X_obs)
+        #     X_simulated.append(X_sim)
+        #
+        # return torch.stack(X_posterior_predictive), torch.stack(X_simulated)
 
     def get_sample(self):
         return self.posterior.sample((1,))
@@ -171,8 +183,8 @@ class sbiModel:
         self.map_estimator = self.posterior.map(show_progress_bars=False)
         return self.map_estimator
 
-    def to_arviz_data(self, save: bool = False):
-        X_posterior_predictive, X_simulated = self.simulations_from_samples(n=1)
+    def to_arviz_data(self, num_workers: int, save: bool = False):
+        X_posterior_predictive, X_simulated = self.simulations_from_samples(num_workers=num_workers)
 
         epsilon = self.posterior_samples[:, [i for (i, key, _) in self.prior_keys if key == "epsilon"][0]]
         log_probability = self.log_probability(X_posterior_predictive, X_simulated, sigma=epsilon)
@@ -308,3 +320,50 @@ def infer_main(
         posterior = inference.build_posterior(mcmc_method="nuts")
 
     return posterior, density_estimator
+
+
+def simulate_in_batches_(
+    simulator: Callable,
+    theta: torch.Tensor,
+    sim_batch_size: int = 1,
+    num_workers: int = 1,
+    show_progress_bars: bool = True,
+) -> torch.Tensor:
+
+    num_sims, *_ = theta.shape
+
+    if num_sims == 0:
+        x = torch.tensor([])
+    elif sim_batch_size is not None and sim_batch_size < num_sims:
+        batches = torch.split(theta, sim_batch_size, dim=0)
+
+        if num_workers > 1:
+            with tqdm_joblib(
+                tqdm(
+                    batches,
+                    disable=not show_progress_bars,
+                    desc=f"Running {num_sims} simulations in {len(batches)} batches.",
+                    total=len(batches),
+                )
+            ) as progress_bar:
+                simulation_outputs = Parallel(n_jobs=num_workers)(
+                    delayed(simulator)(batch, True) for batch in batches
+                )
+        else:
+            pbar = tqdm(
+                total=num_sims,
+                disable=not show_progress_bars,
+                desc=f"Running {num_sims} simulations.",
+            )
+
+            with pbar:
+                simulation_outputs = []
+                for batch in batches:
+                    simulation_outputs.append(simulator(batch, True))
+                    pbar.update(sim_batch_size)
+
+        x = torch.cat(simulation_outputs, dim=0)
+    else:
+        x = simulator(theta, True)
+
+    return x
