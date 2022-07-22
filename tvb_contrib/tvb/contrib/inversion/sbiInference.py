@@ -84,7 +84,7 @@ class sbiModel:
         del sim_
 
         if return_sim:
-            return x_obs, x_sim
+            return torch.stack((x_obs, x_sim), dim=0)
         else:
             return x_obs
 
@@ -157,7 +157,7 @@ class sbiModel:
     def simulations_from_samples(self, num_workers: int, n: int = 1):
         theta = self.posterior_samples[::n]
 
-        X_posterior_predictive, X_simulated = simulate_in_batches_(
+        X_posterior_predictive, X_simulated = simulate_in_batches_with_sim(
             simulator=self.simulation_wrapper,
             theta=theta,
             num_workers=num_workers
@@ -208,6 +208,7 @@ class sbiModel:
             for i, (x_sim, x_pp) in enumerate(zip(X_sim, X_pp)):
                 mu = x_sim
                 sig = sigma if isinstance(sigma, float) else sigma[i]
+                sig = torch.abs(sig)
                 logp_ = -math.log(sig * math.sqrt(2. * math.pi)) - ((x_pp - mu) / sig) ** 2 / 2.
                 logp_ = torch.as_tensor(logp_.numpy().reshape(self.shape, order="F"))
 
@@ -312,7 +313,7 @@ def infer_main(
         num_simulations=num_simulations,
         num_workers=num_workers,
     )
-    print(theta.shape, x.shape)
+    
     density_estimator = inference.append_simulations(theta, x).train()
     if method == "SNPE":
         posterior = inference.build_posterior()
@@ -322,7 +323,7 @@ def infer_main(
     return posterior, density_estimator
 
 
-def simulate_in_batches_(
+def simulate_in_batches_with_sim(
     simulator: Callable,
     theta: torch.Tensor,
     sim_batch_size: int = 1,
@@ -347,7 +348,7 @@ def simulate_in_batches_(
                 )
             ) as progress_bar:
                 simulation_outputs = Parallel(n_jobs=num_workers)(
-                    delayed(simulator)(batch, True) for batch in batches
+                    delayed(simulator)(batch[0], True) for batch in batches
                 )
         else:
             pbar = tqdm(
@@ -359,10 +360,10 @@ def simulate_in_batches_(
             with pbar:
                 simulation_outputs = []
                 for batch in batches:
-                    simulation_outputs.append(simulator(batch, True))
+                    simulation_outputs.append(simulator(batch[0], True))
                     pbar.update(sim_batch_size)
 
-        x = torch.cat(simulation_outputs, dim=0)
+        x = torch.stack(simulation_outputs, dim=1)
     else:
         x = simulator(theta, True)
 
