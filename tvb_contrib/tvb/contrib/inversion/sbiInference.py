@@ -157,7 +157,7 @@ class sbiModel:
     def simulations_from_samples(self, num_workers: int, n: int = 1):
         theta = self.posterior_samples[::n]
 
-        X_posterior_predictive, X_simulated = simulate_in_batches_with_sim(
+        X_posterior_predictive, X_simulated = parallel_simulations(
             simulator=self.simulation_wrapper,
             theta=theta,
             num_workers=num_workers
@@ -323,11 +323,12 @@ def infer_main(
     return posterior, density_estimator
 
 
-def simulate_in_batches_with_sim(
+def parallel_simulations(
     simulator: Callable,
     theta: torch.Tensor,
     sim_batch_size: int = 1,
     num_workers: int = 1,
+    return_sim: bool = True,
     show_progress_bars: bool = True,
 ) -> torch.Tensor:
 
@@ -348,7 +349,7 @@ def simulate_in_batches_with_sim(
                 )
             ) as progress_bar:
                 simulation_outputs = Parallel(n_jobs=num_workers)(
-                    delayed(simulator)(batch[0], True) for batch in batches
+                    delayed(simulator)(batch[0], return_sim) for batch in batches
                 )
         else:
             pbar = tqdm(
@@ -360,11 +361,11 @@ def simulate_in_batches_with_sim(
             with pbar:
                 simulation_outputs = []
                 for batch in batches:
-                    simulation_outputs.append(simulator(batch[0], True))
+                    simulation_outputs.append(simulator(batch[0], return_sim))
                     pbar.update(sim_batch_size)
 
         x = torch.stack(simulation_outputs, dim=1)
     else:
-        x = simulator(theta, True)
+        x = simulator(theta, return_sim)
 
     return x

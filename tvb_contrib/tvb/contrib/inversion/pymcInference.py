@@ -39,8 +39,8 @@ class NonCenteredModel:
             x_init: Union[FreeRV, TransformedRV],
             time_series: Union[FreeRV, TransformedRV],
             dyn_noise: Union[FreeRV, TransformedRV],
-            # amplitude: Union[FreeRV, TransformedRV],
-            # offset: Union[FreeRV, TransformedRV],
+            amplitude: Union[FreeRV, TransformedRV],
+            offset: Union[FreeRV, TransformedRV],
             obs_noise: Union[FreeRV, TransformedRV],
             shape: Union[Tuple, List]
     ):
@@ -55,9 +55,9 @@ class NonCenteredModel:
 
             x_sim, updates = theano.scan(fn=self.scheme, sequences=[time_series], outputs_info=[x_init], n_steps=shape[0])
 
-            # x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_sim + offset)
+            x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_sim + offset)
 
-            x_obs = pm.Normal(name="x_obs", mu=x_sim, sd=obs_noise, shape=tuple(shape), observed=self.obs)
+            x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=obs_noise, shape=tuple(shape), observed=self.obs)
 
     def scheme(self, x_eta, x_prev):
         x_next = x_prev + self.dt * self.model_instance.pymc_dfun(x_prev, self.params) + tt.sqrt(self.dt) * x_eta * self.noise
