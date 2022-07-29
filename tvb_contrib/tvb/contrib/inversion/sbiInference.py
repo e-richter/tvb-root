@@ -32,23 +32,21 @@ class sbiModel:
     def __init__(
             self,
             simulator_instance: Simulator,
-            # integrator_instance: Integrator,
-            # model_instance: Model,
             method: Literal["SNPE", "SNLE", "SNRE"],
-            obs: np.ndarray,
-            prior_vars: Dict[str, List],
-            prior_dist: Literal["Normal", "Uniform"],
-            neural_net: str = "maf"
+            obs: np.ndarray
+            # integrator_instance: Integrator,
+            # model_instance: Model
     ):
+
         self.run_id = datetime.now().strftime("%Y-%m-%d_%H%M")
         self.simulator_instance = simulator_instance
         # self.integrator_instance = integrator_instance
         # self.model_instance = model_instance
         self.method = method
-        self.neural_net = neural_net
         self.obs = obs
         self.shape = self.obs.shape
-        self.priors = self._set_priors(prior_vars=prior_vars, prior_dist=prior_dist)
+        self.neural_net = None
+        self.priors = None
 
         self.posterior = None
         self.posterior_samples = None
@@ -139,10 +137,17 @@ class sbiModel:
 
     def run_inference(
             self,
+            prior_vars: Dict[str, List],
+            prior_dist: Literal["Normal", "Uniform"],
             num_simulations: int,
             num_workers: int,
-            num_samples: int
+            num_samples: int,
+            neural_net: str = "maf"
     ):
+
+        self.neural_net = neural_net
+        self.priors = self._set_priors(prior_vars=prior_vars, prior_dist=prior_dist)
+
         self.num_simulations = num_simulations
         self.posterior, self.density_estimator = infer_main(
             simulator=self.simulation_wrapper,

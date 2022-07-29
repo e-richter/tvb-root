@@ -75,16 +75,16 @@ priors = {
 snpe_model = sbiModel(
     simulator_instance=sim,
     method="SNPE",
-    obs=X,
-    prior_vars=priors,
-    prior_dist="Normal",
-    neural_net="mdn"
+    obs=X
 )
 
 snpe_model.run_inference(
+    prior_vars=priors,
+    prior_dist="Normal",
     num_simulations=1200,
     num_workers=4,
-    num_samples=2000
+    num_samples=2000,
+    neural_net="mdn"
 )
 
 inference_data = snpe_model.to_arviz_data(num_workers=4, save=True)
