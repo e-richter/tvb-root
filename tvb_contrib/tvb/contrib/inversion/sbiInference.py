@@ -38,7 +38,6 @@ class sbiModel:
             obs: np.ndarray,
             prior_vars: Dict[str, List],
             prior_dist: Literal["Normal", "Uniform"],
-            obs_shape: Union[Tuple, List],
             neural_net: str = "maf"
     ):
         self.run_id = datetime.now().strftime("%Y-%m-%d_%H%M")
@@ -48,11 +47,12 @@ class sbiModel:
         self.method = method
         self.neural_net = neural_net
         self.obs = obs
-        self.shape = tuple(obs_shape)
+        self.shape = self.obs.shape
         self.priors = self._set_priors(prior_vars=prior_vars, prior_dist=prior_dist)
 
         self.posterior = None
         self.posterior_samples = None
+        self.num_simulations = None
         self.simulations = None
         self.simulation_params = None
         self.density_estimator = None
@@ -143,6 +143,7 @@ class sbiModel:
             num_workers: int,
             num_samples: int
     ):
+        self.num_simulations = num_simulations
         self.posterior, self.density_estimator = infer_main(
             simulator=self.simulation_wrapper,
             prior=self.priors,
@@ -256,7 +257,10 @@ class sbiModel:
 
     def save(self):
         with open(f"sbi_data/inference_data/{self.run_id}_instance.pkl", "wb") as out:
-            pickle.dump(self.__dict__, out, pickle.HIGHEST_PROTOCOL)
+            tmp = self.__dict__.copy()
+            del tmp["simulator_instance"]
+            pickle.dump(tmp, out, pickle.HIGHEST_PROTOCOL)
+            out.close()
 
     def load(self, pkl_file):
         with open(f"sbi_data/inference_data/{pkl_file}", "rb") as out:
