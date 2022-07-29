@@ -38,7 +38,7 @@ class sbiModel:
             # model_instance: Model
     ):
 
-        self.run_id = datetime.now().strftime("%Y-%m-%d_%H%M")
+        self.run_id = datetime.now().strftime("%Y-%m-%d_%H-%-M-%S-%f")
         self.simulator_instance = simulator_instance
         # self.integrator_instance = integrator_instance
         # self.model_instance = model_instance
