@@ -1,7 +1,9 @@
 #!/usr/bin/python3
 
 import numpy as np
-import arviz as az
+from copy import deepcopy
+from joblib import Parallel, delayed
+
 from tvb.simulator.models.oscillator import Generic2dOscillator
 from tvb.simulator.integrators import HeunStochastic
 from tvb.simulator.simulator import Simulator
@@ -72,21 +74,28 @@ priors = {
     "epsilon": [0.0, 0.01, False]
 }
 
-snpe_model = sbiModel(
-    simulator_instance=sim,
-    method="SNPE",
-    obs=X
-)
 
-snpe_model.run_inference(
-    prior_vars=priors,
-    prior_dist="Normal",
-    num_simulations=1200,
-    num_workers=4,
-    num_samples=2000,
-    neural_net="mdn"
-)
+def job():
+    snpe_model = sbiModel(
+        simulator_instance=sim,
+        method="SNPE",
+        obs=X
+    )
 
-inference_data = snpe_model.to_arviz_data(num_workers=4, save=True)
+    snpe_model.run_inference(
+        prior_vars=priors,
+        prior_dist="Normal",
+        num_simulations=1200,
+        num_workers=4,
+        num_samples=2000,
+        neural_net="mdn"
+    )
 
-snpe_model.save()
+    _ = snpe_model.to_arviz_data(num_workers=4, save=True)
+
+    snpe_model.save()
+
+
+if __name__ == "__main__":
+    num_inferences = 4
+    _ = Parallel(n_jobs=4)(delayed(job) for _ in range(num_inferences))
