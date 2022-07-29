@@ -391,7 +391,7 @@ class Generic2dOscillator(ModelNumbaDfun):
     def pymc_dfun(state, params):
         lc_0 = params["local_coupling"] * state[0, :, 0]
         vw_ = state
-        c_ = params["coupling"].reshape(params["coupling"].shape[:-1])
+        c_ = params["coupling"]
 
         V = vw_[0]
         V2 = V * V

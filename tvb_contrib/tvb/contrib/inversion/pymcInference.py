@@ -23,6 +23,7 @@ class NonCenteredModel:
         self.consts = None
         self.params = None
         self.obs = None
+        self.shape = None
         self.dt = None
         self.noise = None
 
@@ -41,31 +42,31 @@ class NonCenteredModel:
             dyn_noise: Union[FreeRV, TransformedRV],
             amplitude: Union[FreeRV, TransformedRV],
             offset: Union[FreeRV, TransformedRV],
-            obs_noise: Union[FreeRV, TransformedRV],
-            shape: Union[Tuple, List]
+            obs_noise: Union[FreeRV, TransformedRV]
     ):
         self.priors = priors
         self.consts = consts
         self.params = {**self.priors, **self.consts}
         self.obs = obs
+        self.shape = tuple(self.obs.shape)
         with self.pymc_model:
 
             self.dt = theano.shared(time_step, name="dt")
             self.noise = dyn_noise
 
-            x_sim, updates = theano.scan(fn=self.scheme, sequences=[time_series], outputs_info=[x_init], n_steps=shape[0])
+            x_sim, updates = theano.scan(fn=self.scheme, sequences=[time_series], outputs_info=[x_init], n_steps=self.shape[0])
 
             x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_sim + offset)
 
-            x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=obs_noise, shape=tuple(shape), observed=self.obs)
+            x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=obs_noise, shape=self.shape, observed=self.obs)
 
     def scheme(self, x_eta, x_prev):
         x_next = x_prev + self.dt * self.model_instance.pymc_dfun(x_prev, self.params) + tt.sqrt(self.dt) * x_eta * self.noise
         return x_next
 
-    def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, save: bool = False):
+    def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, max_treedepth: int, save: bool = False):
         with self.pymc_model:
-            self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept)
+            self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept, max_treedepth=max_treedepth)
             posterior_predictive = pm.sample_posterior_predictive(trace=self.trace)
             self.inference_data = az.from_pymc3(trace=self.trace, posterior_predictive=posterior_predictive)
             self.summary = az.summary(self.inference_data)
