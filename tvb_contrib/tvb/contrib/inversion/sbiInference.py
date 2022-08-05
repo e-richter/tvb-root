@@ -13,6 +13,7 @@ from pathlib import Path
 import pickle
 from copy import deepcopy
 from joblib import Parallel, delayed
+import itertools
 
 import sbi.inference
 from sbi import utils as sbi_utils
@@ -61,10 +62,10 @@ class sbiModel:
 
         sim_ = deepcopy(self.simulator_instance)
 
-        for (i, key, _) in self.prior_keys:
-            if key == "epsilon":
+        for (i, key, target) in self.prior_keys:
+            if target == "global":
                 continue
-            sim_.model.__dict__[key] = np.asarray(params[i])
+            getattr(sim_, target).__dict__[key] = np.asarray(params[i])
 
         sim_.configure()
 
@@ -149,7 +150,7 @@ class sbiModel:
         self.priors = self._set_priors(prior_vars=prior_vars, prior_dist=prior_dist)
 
         self.num_simulations = num_simulations
-        self.posterior, self.density_estimator = infer_main(
+        self.posterior, self.density_estimator, self.simulation_params = infer_main(
             simulator=self.simulation_wrapper,
             prior=self.priors,
             method=self.method,
@@ -196,7 +197,7 @@ class sbiModel:
         log_probability = self.log_probability(X_posterior_predictive, X_simulated, sigma=epsilon)
 
         self.inference_data = az.from_dict(
-            posterior=dict(zip([key for i, key, _ in self.prior_keys], np.asarray(self.posterior_samples.T))),
+            posterior=dict(zip(["_".join([key, target]) for i, key, target in self.prior_keys], np.asarray(self.posterior_samples.T))),
             posterior_predictive={"x_obs": X_posterior_predictive.numpy().reshape((1, len(self.posterior_samples), *self.shape), order="F")},
             log_likelihood={"x_obs": log_probability.numpy().reshape((1, len(self.posterior_samples), *self.shape), order="F")},
             observed_data={"x_obs": self.obs.reshape(self.shape, order="F")}
@@ -260,11 +261,12 @@ class sbiModel:
         if save:
             plt.savefig(f"sbi_data/figures/{self.run_id}_posterior_samples.png", dpi=600, bbox_inches=None)
 
-    def save(self):
+    def save(self, simulation_params: dict):
         with open(f"sbi_data/inference_data/{self.run_id}_instance.pkl", "wb") as out:
             tmp = self.__dict__.copy()
             del tmp["simulator_instance"]
-            pickle.dump(tmp, out, pickle.HIGHEST_PROTOCOL)
+            del simulation_params["simulation"]
+            pickle.dump({**tmp, "simulation_params": simulation_params}, out, pickle.HIGHEST_PROTOCOL)
             out.close()
 
     def load(self, pkl_file):
@@ -275,9 +277,20 @@ class sbiModel:
     def _set_priors(self, prior_vars, prior_dist):
 
         if prior_dist == "Normal":
-            prior_mean = [value[0] for _, value in prior_vars.items()]
-            prior_sd = [value[1] for _, value in prior_vars.items()]
-            self.prior_keys = [(i, key, value[-1]) for i, (key, value) in enumerate(prior_vars.items())]
+            prior_mean = [v[0] for v in list(itertools.chain(*[list(w.values()) for _, w in prior_vars.items()]))]
+            prior_sd = [v[1] for v in list(itertools.chain(*[list(w.values()) for _, w in prior_vars.items()]))]
+            
+            # self.prior_keys = [(i, key, value["for"]) for i, (key, value) in enumerate(prior_vars.items())]
+            targets = []
+            keys = []
+            for target, v in prior_vars.items():
+                targets.append([target] * len(list(v.keys())))
+                keys.append(list(v.keys()))
+            targets = list(itertools.chain(*targets))
+            keys = list(itertools.chain(*keys))
+            self.prior_keys = []
+            for i, (key, target) in enumerate(zip(keys, targets)):
+                self.prior_keys.append((i, key, target))
 
             prior_loc = []
             prior_scale = []
@@ -291,9 +304,20 @@ class sbiModel:
             return torch.distributions.MultivariateNormal(loc=prior_loc, scale_tril=prior_scale)
 
         elif prior_dist == "Uniform":
-            prior_min = [(value[0] - value[1]) for _, value in prior_vars.items()]
-            prior_max = [(value[0] + value[1]) for _, value in prior_vars.items()]
-            self.prior_keys = [(i, key, value[-1]) for i, (key, value) in enumerate(prior_vars.items())]
+            prior_min = [(v[0] - v[1]) for v in list(itertools.chain(*[list(w.values()) for _, w in prior_vars.items()]))]
+            prior_max = [(v[0] + v[1]) for v in list(itertools.chain(*[list(w.values()) for _, w in prior_vars.items()]))]
+            
+            # self.prior_keys = [(i, key, value["for"]) for i, (key, value) in enumerate(prior_vars.items())]
+            targets = []
+            keys = []
+            for target, v in prior_vars.items():
+                targets.append([target] * len(list(v.keys())))
+                keys.append(list(v.keys()))
+            targets = list(itertools.chain(*targets))
+            keys = list(itertools.chain(*keys))
+            self.prior_keys = []
+            for i, (key, target) in enumerate(zip(keys, targets)):
+                self.prior_keys.append((i, key, target))
 
             return sbi_utils.torchutils.BoxUniform(low=torch.as_tensor(prior_min), high=torch.as_tensor(prior_max))
 
@@ -329,7 +353,7 @@ def infer_main(
     else:
         posterior = inference.build_posterior(mcmc_method="nuts")
 
-    return posterior, density_estimator
+    return posterior, density_estimator, theta
 
 
 def parallel_simulations(
