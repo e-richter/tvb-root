@@ -3,11 +3,11 @@
 #SBATCH --account="ich012"
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=emilius.richter@fu-berlin.de
-#SBATCH --time=00:10:00
+#SBATCH --time=00:30:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-core=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=36
 #SBATCH --partition=normal
 #SBATCH --constraint=mc
 #SBATCH --hint=nomultithread
