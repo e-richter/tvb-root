@@ -66,11 +66,14 @@ prior_vars = {
         "a": [2.0, 0.1],
         "b": [-10.0, 0.1],
         "c": [0.0, 0.01],
-        "d": [0.02, 0.005],
+        "d": [0.02, 0.01],
         "I": [0.0, 0.01],
     },
     "coupling": {
-        "a": [0.1, 0.025]
+        "a": [0.1, 0.01]
+    },
+    "integrator.noise" :{
+        "nsig": [0.003, 0.002]
     },
     "global": {
         "epsilon": [0.0, 0.01]
@@ -88,12 +91,12 @@ def job(i):
     snpe_model.run_inference(
         prior_vars=prior_vars,
         prior_dist="Normal",
-        num_simulations=1200,
+        num_simulations=5000,
         num_workers=4,
-        num_samples=2000
+        num_samples=2000,
     )
 
-    _ = snpe_model.to_arviz_data(num_workers=4, save=True)
+    _ = snpe_model.to_arviz_data(num_workers=4)
 
     snpe_model.save(simulation_params=simulation_params.copy())
 
