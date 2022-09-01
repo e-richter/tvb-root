@@ -14,6 +14,7 @@ import pickle
 from copy import deepcopy
 from joblib import Parallel, delayed
 import itertools
+import operator
 
 import sbi.inference
 from sbi import utils as sbi_utils
@@ -65,10 +66,16 @@ class sbiModel:
         for (i, key, target) in self.prior_keys:
             if target == "global":
                 continue
-            getattr(sim_, target).__dict__[key] = np.asarray(params[i])
+            if "noise" in target:
+                operator.attrgetter(target)(sim_).__dict__[key] = np.abs(np.array([float(params[i])]))
+            else:
+                operator.attrgetter(target)(sim_).__dict__[key] = np.array([float(params[i])])
+            # getattr(sim_, target).__dict__[key] = np.asarray(params[i])
 
         sim_.configure()
 
+        # amplitude = params[[i for (i, key, _) in self.prior_keys if key == "amplitude"][0]]
+        # offset = params[[i for (i, key, _) in self.prior_keys if key == "offset"][0]]
         epsilon = torch.abs(params[[i for (i, key, _) in self.prior_keys if key == "epsilon"][0]])
 
         (t, X), = sim_.run()
@@ -204,9 +211,17 @@ class sbiModel:
         )
 
         if save:
-            self.inference_data.to_netcdf(filename=f"sbi_data/inference_data/{self.run_id}_{self.method}_inference_data.nc", compress=False)
+            self.inference_data.to_netcdf(filename=f"sbi_data/inference_data/{self.run_id}_inference_data.nc", compress=False)
 
         return self.inference_data
+
+    def posterior_zscore(self):
+        z = torch.abs((self.priors.loc - self.posterior_samples.mean(dim=0)) / self.posterior_samples.std(dim=0))
+        return z
+
+    def posterior_shrinkage(self):
+        s = 1 - (self.posterior_samples.std(dim=0)**2 / torch.diag(self.priors.scale_tril)**2)
+        return s
 
     def log_probability(self, X_pp: torch.Tensor, X_sim: torch.Tensor, sigma: Union[float, torch.Tensor]):
 
@@ -255,8 +270,10 @@ class sbiModel:
             posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
             ax = axes.reshape(-1)[i]
             ax.hist(posterior_, bins=bins)
-            ax.axvline(init_params[key], color="r")
-            ax.set_title(key)
+            ax.axvline(init_params[key], color="r", label="simulation parameter")
+            ax.set_title(key, fontsize=18)
+            ax.tick_params(axis="both", labelsize=16)
+        axes[0, 0].legend(fontsize=18)
 
         if save:
             plt.savefig(f"sbi_data/figures/{self.run_id}_posterior_samples.png", dpi=600, bbox_inches=None)
