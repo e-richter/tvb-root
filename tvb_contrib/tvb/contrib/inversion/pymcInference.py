@@ -25,11 +25,13 @@ class NonCenteredModel:
         self.obs = None
         self.shape = None
         self.dt = None
-        self.noise = None
+        self.current_step = 1
+        self.states = []
 
         self.trace = None
         self.inference_data = None
         self.summary = None
+        self.f = None
 
     def set_model(
             self,
@@ -37,9 +39,8 @@ class NonCenteredModel:
             consts: Dict[str, float],
             obs: np.ndarray,
             time_step: float,
-            x_init: Union[FreeRV, TransformedRV],
+            x_init: Union[FreeRV, TransformedRV, np.ndarray],
             time_series: Union[FreeRV, TransformedRV],
-            dyn_noise: Union[FreeRV, TransformedRV],
             amplitude: Union[FreeRV, TransformedRV],
             offset: Union[FreeRV, TransformedRV],
             obs_noise: Union[FreeRV, TransformedRV]
@@ -50,19 +51,25 @@ class NonCenteredModel:
         self.obs = obs
         self.shape = tuple(self.obs.shape)
         with self.pymc_model:
-
             self.dt = theano.shared(time_step, name="dt")
-            self.noise = dyn_noise
 
+            # step_init = 1
+            # states_init = []
             x_sim, updates = theano.scan(fn=self.scheme, sequences=[time_series], outputs_info=[x_init], n_steps=self.shape[0])
 
             x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_sim + offset)
 
             x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=obs_noise, shape=self.shape, observed=self.obs)
 
-    def scheme(self, x_eta, x_prev):
-        x_next = x_prev + self.dt * self.model_instance.pymc_dfun(x_prev, self.params) + tt.sqrt(self.dt) * x_eta * self.noise
-        return x_next
+    def scheme(self, x_eta, x_prev):  # , step_prev):
+        # if step_prev == 1:
+        #     states_before.append(x_prev)
+        x_next = x_prev + self.dt * self.model_instance.pymc_dfun(x_prev, self.params) + x_eta  # * self.noise * tt.sqrt(self.dt)
+        # step_next = step_prev + 1
+
+        # states_updated = tt.concatenate([states_before, x_next])
+        # self.current_step += 1
+        return x_next  # , step_next
 
     def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, max_treedepth: int, save: bool = False):
         with self.pymc_model:
@@ -79,10 +86,10 @@ class NonCenteredModel:
     def model_criteria(self, criteria: List[str]):
         out = dict()
         if "WAIC" in criteria:
-            waic = az.waic(self.inference_data)
+            waic = az.waic(self.inference_data, scale="deviance")
             out["WAIC"] = waic.waic
         if "LOO" in criteria:
-            loo = az.loo(self.inference_data)
+            loo = az.loo(self.inference_data, scale="deviance")
             out["LOO"] = loo.loo
 
         map_estimate = None
@@ -116,15 +123,24 @@ class NonCenteredModel:
             posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
             ax = axes.reshape(-1)[i]
             ax.hist(posterior_, bins=100)
-            ax.axvline(init_params[key], color="r")
-            ax.set_title(key)
+            ax.axvline(init_params[key], color="r", label="simulation parameter")
+            ax.set_title(key, fontsize=18)
+            ax.tick_params(axis="both", labelsize=16)
+        try:
+            axes[0, 0].legend(fontsize=18)
+        except IndexError:
+            axes[0].legend(fontsize=18)
 
         if save:
             plt.savefig(f"pymc_data/figures/{self.run_id}_posterior_samples.png", dpi=600, bbox_inches=None)
 
-    def save(self):
+    def save(self, simulation_params: dict):
         with open(f"pymc_data/inference_data/{self.run_id}_instance.pkl", "wb") as out:
-            pickle.dump(self.__dict__, out, pickle.HIGHEST_PROTOCOL)
+            tmp = self.__dict__.copy()
+            del tmp["model_instance"]
+            del simulation_params["simulation"]
+            pickle.dump({**tmp, "simulation_params": simulation_params}, out, pickle.HIGHEST_PROTOCOL)
+            out.close()
 
     def load(self, pkl_file):
         with open(f"pymc_data/inference_data/{pkl_file}", "rb") as out:
@@ -164,13 +180,12 @@ class CenteredModel:
         self.consts = consts
         self.obs = obs
         with self.pymc_model:
-
             self.dt = theano.shared(time_step, name="dt")
             self.noise = noise
 
             x_sim, updates = theano.scan(fn=self.scheme, outputs_info=[x_init], n_steps=shape[0])
 
-            x_t = pm.Normal(name="x_t", mu=x_sim, sd=tt.sqrt(time_step)*self.noise, shape=tuple(shape))
+            x_t = pm.Normal(name="x_t", mu=x_sim, sd=tt.sqrt(time_step) * self.noise, shape=tuple(shape))
             x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_t + offset)
 
             x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=epsilon, shape=tuple(shape), observed=self.obs["x_obs"])
