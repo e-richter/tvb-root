@@ -13,9 +13,8 @@ import math
 from tqdm import tqdm
 import pickle
 
-
 # Simulation parameters
-with open("limit-cycle_simulation.pkl", "rb") as f:
+with open("../limit-cycle_simulation.pkl", "rb") as f:
     simulation_params = pickle.load(f)
 
 # Model
@@ -51,11 +50,14 @@ if __name__ == "__main__":
 
     with ncModel.pymc_model:
         a_star = pm.Normal(name="a_star", mu=0.0, sd=1.0)
-        a = pm.Deterministic(name="a", var=2.0 + a_star)
+        a = pm.Deterministic(name="a", var=1.5 + a_star)
+        
+        b_star = pm.Normal(name="b_star", mu=0.0, sd=1.0)
+        b = pm.Deterministic(name="b", var=-11.0 + 6.0 * a_star)
 
         priors = {
             "a": a,
-            "b": np.array([simulation_params["b_sim"]]),
+            "b": b,
             "c": np.array([simulation_params["c_sim"]]),
             "d": np.array([simulation_params["d_sim"]]),
             "I": np.array([simulation_params["I_sim"]]),
@@ -92,7 +94,8 @@ if __name__ == "__main__":
         epsilon = BoundedNormal(name="epsilon", mu=0.0, sd=1.0)
 
         ncModel.prior_stats = {
-            "a": {"mean": 2.0, "sd": 1.0},
+            "a": {"mean": 1.5, "sd": 1.0},
+            "b": {"mean": -11.0, "sd": 6.0},
             "noise": {"mean": 0.05, "sd": 0.1},
             "epsilon": {"mean": 0.0, "sd": 1.0}
         }
@@ -108,7 +111,7 @@ if __name__ == "__main__":
         offset=offset,
         obs_noise=epsilon
     )
-
+    
     nc_data = ncModel.run_inference(
         draws=draws,
         tune=tune,

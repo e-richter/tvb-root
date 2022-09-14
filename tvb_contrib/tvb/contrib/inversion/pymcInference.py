@@ -86,10 +86,10 @@ class NonCenteredModel:
     def model_criteria(self, criteria: List[str]):
         out = dict()
         if "WAIC" in criteria:
-            waic = az.waic(self.inference_data, scale="deviance")
+            waic = az.waic(self.inference_data)  #, scale="deviance")
             out["WAIC"] = waic.waic
         if "LOO" in criteria:
-            loo = az.loo(self.inference_data, scale="deviance")
+            loo = az.loo(self.inference_data)  #, scale="deviance")
             out["LOO"] = loo.loo
 
         map_estimate = None

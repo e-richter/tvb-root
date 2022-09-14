@@ -108,9 +108,9 @@ class sbiModel:
             if target == "global":
                 continue
             if "model" in target:
-                operator.attrgetter(target)(model_).__dict__[key] = np.array([float(params[i])])
+                model_.__dict__[key] = np.array([float(params[i])])
             elif "integrator" in target:
-                operator.attrgetter(target)(integrator_).__dict__[key] = np.abs(np.array([float(params[i])]))
+                integrator_.__dict__[key] = np.abs(np.array([float(params[i])]))
 
         epsilon = torch.abs(params[[i for (i, key, _) in self.prior_keys if key == "epsilon"][0]])
 
@@ -146,7 +146,7 @@ class sbiModel:
         ).sample()
 
         if return_sim:
-            return x_obs, x_sim
+            return torch.stack((x_obs, x_sim), dim=0)
         else:
             return x_obs
 
@@ -289,6 +289,9 @@ class sbiModel:
         with open(f"sbi_data/inference_data/{self.run_id}_instance.pkl", "wb") as out:
             tmp = self.__dict__.copy()
             del tmp["simulator_instance"]
+            del tmp["model_instance"]
+            del tmp["integrator_instance"]
+            del tmp["simulation_wrapper"]
             del simulation_params["simulation"]
             pickle.dump({**tmp, "simulation_params": simulation_params}, out, pickle.HIGHEST_PROTOCOL)
             out.close()
