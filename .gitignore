@@ -32,3 +32,4 @@ TEST_OUTPUT/
 
 .DS_Store
 sbi-logs/
+notebooks/
