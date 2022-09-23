@@ -13,9 +13,13 @@
 #SBATCH --hint=nomultithread
 #SBATCH --output=pymc_data/slurm.out
 
-export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-
 source ~/.bashrc
 source activate BrainSim-env
 
-python3 pymc_inference.py
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+
+theano-cache purge
+stamp=$(date +%s)
+export THEANO_FLAGS="base_compiledir=/var/tmp/$stamp/.theano/,compile__timeout=24,compile__wait=20,device=cpu"
+
+python3 /users/erichter/tvb/tvb-root/tvb_contrib/tvb/contrib/inversion/examples/1node-limit_cycle/pymc3/pymc_inference.py

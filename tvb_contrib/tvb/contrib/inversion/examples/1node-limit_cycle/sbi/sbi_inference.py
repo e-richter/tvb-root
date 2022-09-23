@@ -17,10 +17,6 @@ import tvb.simulator.monitors
 with open('../limit-cycle_simulation.pkl', 'rb') as f:
     simulation_params = pickle.load(f)
 
-# Simulation parameters
-with open("limit-cycle_simulation.pkl", "rb") as f:
-    simulation_params = pickle.load(f)
-
 # Model
 oscillator_model = getattr(tvb.simulator.models, simulation_params["model"])(
     a=np.asarray([simulation_params["a_sim"]]),
@@ -44,10 +40,12 @@ X = simulation_params["simulation"]
 
 prior_vars = {
     "model": {
-        "a": [2.0, 1.0]
+        "a": [1.5, 1.0],
+        "b": [-11.0, 6.0],
+        "c": [0.5, 0.5]
     },
     "integrator.noise": {
-        "nsig": [0.003, 0.002]
+        "nsig": [0.003, 0.0015]
     },
     "global": {
         "epsilon": [0.0, 1.0]
@@ -66,7 +64,7 @@ def job(i):
     snpe_model.run_inference(
         prior_vars=prior_vars,
         prior_dist="Normal",
-        num_simulations=5000,
+        num_simulations=25000,
         num_workers=4,
         num_samples=2000,
     )
@@ -77,5 +75,5 @@ def job(i):
 
 
 if __name__ == "__main__":
-    num_inferences = 1
+    num_inferences = 4
     _ = Parallel(n_jobs=num_inferences)(delayed(job)(i) for i in range(num_inferences))
