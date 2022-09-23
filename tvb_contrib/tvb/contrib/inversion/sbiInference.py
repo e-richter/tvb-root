@@ -108,9 +108,9 @@ class sbiModel:
             if target == "global":
                 continue
             if "model" in target:
-                operator.attrgetter(target)(model_).__dict__[key] = np.array([float(params[i])])
+                model_.__dict__[key] = np.array([float(params[i])])
             elif "integrator" in target:
-                operator.attrgetter(target)(integrator_).__dict__[key] = np.abs(np.array([float(params[i])]))
+                integrator_.__dict__[key] = np.abs(np.array([float(params[i])]))
 
         epsilon = torch.abs(params[[i for (i, key, _) in self.prior_keys if key == "epsilon"][0]])
 
@@ -146,7 +146,7 @@ class sbiModel:
         ).sample()
 
         if return_sim:
-            return x_obs, x_sim
+            return torch.stack((x_obs, x_sim), dim=0)
         else:
             return x_obs
 
@@ -222,8 +222,12 @@ class sbiModel:
 
         return self.inference_data
 
-    def posterior_zscore(self):
-        z = torch.abs((self.priors.loc - self.posterior_samples.mean(dim=0)) / self.posterior_samples.std(dim=0))
+    def posterior_zscore(self, init_params: Dict[str, float]):
+        z = torch.empty(len(init_params))
+        for i, (key, value) in enumerate(init_params.items()):
+            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            z_ = np.abs(value - posterior_.mean()) / posterior_.std()
+            z[i] = z_
         return z
 
     def posterior_shrinkage(self):
@@ -289,6 +293,9 @@ class sbiModel:
         with open(f"sbi_data/inference_data/{self.run_id}_instance.pkl", "wb") as out:
             tmp = self.__dict__.copy()
             del tmp["simulator_instance"]
+            del tmp["model_instance"]
+            del tmp["integrator_instance"]
+            del tmp["simulation_wrapper"]
             del simulation_params["simulation"]
             pickle.dump({**tmp, "simulation_params": simulation_params}, out, pickle.HIGHEST_PROTOCOL)
             out.close()
