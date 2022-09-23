@@ -157,8 +157,6 @@ class pymcModel:
         self.run_id = datetime.now().strftime("%Y-%m-%d_%H%M")
 
         self.priors = None
-        self.consts = None
-        self.params = None
         self.obs = None
         self.shape = None
         self.dt = None
@@ -175,8 +173,6 @@ class pymcModel:
             observation_model="Raw",
     ):
         self.priors = priors
-        # self.consts = consts
-        # self.params = {**self.priors, **self.consts}
         self.obs = obs
         self.shape = tuple(self.obs.shape)
         with self.stat_model:
@@ -190,18 +186,17 @@ class pymcModel:
             idmax = self.tvb_simulator.connectivity.idelays.max()
             cvars = self.tvb_simulator.history.cvars
 
-            x_init = pm.Normal(name="x_init", mu=0.0, sd=5.0, shape=(idmax + 1, Nsv, Nr, 1))
-            # x_init = theano.shared(np.random.rand(idmax+1, Nsv, Nr, 1))
-            # x_init = tt.matrix()
+            x0_init = pm.Normal(name="x0_init", mu=0.0, sd=5.0, shape=(Nsv, Nr, 1))
+            x_init = np.zeros((idmax + 1, Nsv, Nr, 1))
+            x_init = theano.shared(x_init, name="x_init")
+            x_init = tt.set_subtensor(x_init[-1], x0_init)
 
             # history_init = pm.Normal(name="history_init", mu=0.0, sd=5.0, shape=(idmax, Nsv, Nr, 1))
-
             # nc_init = np.zeros([Nt, Nc, Nr, 1])
             # nc_init = theano.shared(nc_init, name="nc_init")
             #
             # X_init = np.empty([Nt, Nsv, Nr, 1])
             # X_init = theano.shared(X_init, name="X_init")
-
             # nc, _ = theano.scan(
             #     fn=self.compute_node_coupling,
             #     sequences=[tt.as_tensor_variable(np.arange(Nt))],
@@ -230,7 +225,7 @@ class pymcModel:
 
                 x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=self.priors["global.noise"], shape=self.shape, observed=self.obs)
 
-    def scheme(self, x_eta, *args):  # , it):
+    def scheme(self, x_eta, *args):
         Nr = self.tvb_simulator.connectivity.number_of_regions
         Ncv = self.tvb_simulator.history.n_cvar
 
@@ -251,12 +246,12 @@ class pymcModel:
         lri, nzr = self.tvb_simulator.coupling._lri(self.tvb_simulator.history.nnz_row_el_idx)
         try:
             sum_[:, nzr] = np.add.reduceat(weights_col * pre, lri, axis=1)
-            node_coupling = self.tvb_simulator.coupling.post(sum_)
+            node_coupling = self.tvb_simulator.coupling.pymc_post(sum_, self.priors)
         except:
-            node_coupling = self.tvb_simulator.coupling.post(sum_)
+            node_coupling = self.tvb_simulator.coupling.pymc_post(sum_, self.priors)
 
-        x_next = x_prev + self.dt * self.tvb_simulator.model.pymc_dfun(x_prev, self.priors, node_coupling) + x_eta  # * self.noise * tt.sqrt(self.dt)
-        return x_next  # , it + 1
+        x_next = x_prev + self.dt * self.tvb_simulator.model.pymc_dfun(x_prev, self.priors, node_coupling) + x_eta
+        return x_next
 
     def compute_node_coupling(self, it, nc, X_init, x_init, history_init):
 
@@ -285,9 +280,9 @@ class pymcModel:
 
         return nc
 
-    def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, max_treedepth: int, save: bool = False):
+    def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, max_treedepth: int, step_scale: float, save: bool = False):
         with self.stat_model:
-            self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept, max_treedepth=max_treedepth)
+            self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept, max_treedepth=max_treedepth, step_scale=step_scale)
             posterior_predictive = pm.sample_posterior_predictive(trace=self.trace)
             self.inference_data = az.from_pymc3(trace=self.trace, posterior_predictive=posterior_predictive)
             self.summary = az.summary(self.inference_data)

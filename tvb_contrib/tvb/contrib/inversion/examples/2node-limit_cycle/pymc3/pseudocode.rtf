@@ -1,0 +1,56 @@
+Nt: simulation length in steps
+Nsv: number of state variables of the system
+Nr: number of brain region nodes
+Ncv: number of brain regions used for coupling (being sent to other regions)
+Nc: number of coupling inputs getting to a region as an input,
+i.e., Ncv inputs from source nodes, combine with Nsv state variables of the target nodes, to produce a coupling input of dimensionality Nc towards the target node.
+
+Assume also:
+Idmax the maximum delay steps.
+and w_ts and id_ts the connectivity weights and delay steps between any source (s) and target (t) region.
+DO:
+
+
+1. SAMPLE:
+
+init_cond of (Nsv, Nr) for the initial conditions, for zero time, i.e., it = 0
+
+2. SAMPLE also:
+
+history of (idmax, Ncv, Nr) for the history at 'negative' times, i.e., before it = 0
+
+(Notice that we don't need to sample for all state variables this history, but only for the ones that are used for coupling)
+
+3. Initialize
+
+x of (Nt, Nsv, Nr) as empty tensor
+
+4. Initialize
+
+nc (node_coupling) of (Nt, Nc, Nr) = 0.0 (zeros tensors)
+
+5. Sample possible coupling function parameters (e.g., coupling.a)
+
+6. Determine nc by looping for times and pairs of nodes:
+
+for it in times_steps:
+   for iT in regions (targets):
+	for iS in regions (sources):
+		if it - id_ts > 0:
+			nc[it, :, iT] += w_ts * coupling.pre_tensor(x[it, :, iS], x[it-id_ts, cvars, iT]) # we need to select only the cvars from state variables
+		elif it - id_ts == 0:
+			nc[it, :, iT] += w_ts * coupling.pre_tensor(x[it, :, iS], init_cond[cvars, iT]) # we need to select only the cvars from state variables, no time dimension
+		else:  # i.e., it - id_ts < 0
+			nc[it, :, iT] += w_ts * coupling.pre_tensor(x[it, :, iS], history[it-id_ts, :, iT]) # only cvars are sampled for history anyway
+	nc[it, :, iT] = coupling.post_tensor(nc[it, :, iT])
+
+7. Set node coupling nc as a (derived) parameter to be used now as a derived parameter in self.scheme and theano.scan, without any problems:
+self.params['nc'] = nc
+
+8. x_t, theano.scan etc.
+
+9. Observation model:
+
+9.1: sample observation model parameters
+
+9.2: sample x_obs using monitor.tensor_fun(x_t)
