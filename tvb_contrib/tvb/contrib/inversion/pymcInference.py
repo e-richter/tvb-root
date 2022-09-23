@@ -71,9 +71,9 @@ class NonCenteredModel:
         # self.current_step += 1
         return x_next  # , step_next
 
-    def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, max_treedepth: int, save: bool = False):
+    def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, max_treedepth: int, step_scale: float, save: bool = False):
         with self.pymc_model:
-            self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept, max_treedepth=max_treedepth)
+            self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept, max_treedepth=max_treedepth, step_scale=step_scale)
             posterior_predictive = pm.sample_posterior_predictive(trace=self.trace)
             self.inference_data = az.from_pymc3(trace=self.trace, posterior_predictive=posterior_predictive)
             self.summary = az.summary(self.inference_data)

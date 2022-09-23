@@ -41,7 +41,8 @@ X = simulation_params["simulation"]
 prior_vars = {
     "model": {
         "a": [1.5, 1.0],
-        "b": [-11.0, 6.0]
+        "b": [-11.0, 6.0],
+        "c": [0.5, 0.5]
     },
     "integrator.noise": {
         "nsig": [0.003, 0.0015]

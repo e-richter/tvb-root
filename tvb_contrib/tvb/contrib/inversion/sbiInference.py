@@ -222,8 +222,12 @@ class sbiModel:
 
         return self.inference_data
 
-    def posterior_zscore(self):
-        z = torch.abs((self.priors.loc - self.posterior_samples.mean(dim=0)) / self.posterior_samples.std(dim=0))
+    def posterior_zscore(self, init_params: Dict[str, float]):
+        z = torch.empty(len(init_params))
+        for i, (key, value) in enumerate(init_params.items()):
+            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            z_ = np.abs(value - posterior_.mean()) / posterior_.std()
+            z[i] = z_
         return z
 
     def posterior_shrinkage(self):

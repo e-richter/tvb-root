@@ -50,15 +50,18 @@ if __name__ == "__main__":
 
     with ncModel.pymc_model:
         a_star = pm.Normal(name="a_star", mu=0.0, sd=1.0)
-        a = pm.Deterministic(name="a", var=1.5 + a_star)
+        a = pm.Deterministic(name="a", var=2.0 + a_star)
         
         b_star = pm.Normal(name="b_star", mu=0.0, sd=1.0)
-        b = pm.Deterministic(name="b", var=-11.0 + 6.0 * a_star)
+        b = pm.Deterministic(name="b", var=-10.0 + 5.0 * a_star)
+        
+        c_star = pm.Normal(name="c_star", mu=0.0, sd=1.0)
+        c = pm.Deterministic(name="c", var=0.0 + 0.5 * a_star)
 
         priors = {
             "a": a,
             "b": b,
-            "c": np.array([simulation_params["c_sim"]]),
+            "c": c,
             "d": np.array([simulation_params["d_sim"]]),
             "I": np.array([simulation_params["I_sim"]]),
             "tau": np.array([1.0]),
@@ -94,8 +97,9 @@ if __name__ == "__main__":
         epsilon = BoundedNormal(name="epsilon", mu=0.0, sd=1.0)
 
         ncModel.prior_stats = {
-            "a": {"mean": 1.5, "sd": 1.0},
-            "b": {"mean": -11.0, "sd": 6.0},
+            "a": {"mean": 2.0, "sd": 1.0},
+            "b": {"mean": -10.0, "sd": 5.0},
+            "c": {"mean": 0.0, "sd": 0.5},
             "noise": {"mean": 0.05, "sd": 0.1},
             "epsilon": {"mean": 0.0, "sd": 1.0}
         }
@@ -118,6 +122,7 @@ if __name__ == "__main__":
         cores=num_cores,
         target_accept=0.9,
         max_treedepth=20,
+        step_scale=0.125,
         save=True
     )
 
