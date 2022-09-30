@@ -13,67 +13,53 @@ import pickle
 from copy import deepcopy, copy
 
 
-class NonCenteredModel:
-    def __init__(self, model_instance: Model):
-        self.model_instance = model_instance
-        self.pymc_model = pm.Model()
+class pymcModel1node:
+    def __init__(self, tvb_model: Model):
+        self.tvb_model = tvb_model
+        self.stat_model = pm.Model()
 
         self.run_id = datetime.now().strftime("%Y-%m-%d_%H%M")
 
         self.priors = None
-        self.consts = None
-        self.params = None
+        self.prior_stats = None
         self.obs = None
         self.shape = None
         self.dt = None
-        self.current_step = 1
-        self.states = []
 
         self.trace = None
         self.inference_data = None
         self.summary = None
-        self.f = None
 
     def set_model(
             self,
             priors: Dict[str, Union[FreeRV, TransformedRV, DeterministicWrapper]],
-            consts: Dict[str, float],
             obs: np.ndarray,
             time_step: float,
-            x_init: Union[FreeRV, TransformedRV, np.ndarray],
-            time_series: Union[FreeRV, TransformedRV],
-            amplitude: Union[FreeRV, TransformedRV],
-            offset: Union[FreeRV, TransformedRV],
-            obs_noise: Union[FreeRV, TransformedRV]
     ):
         self.priors = priors
-        self.consts = consts
-        self.params = {**self.priors, **self.consts}
         self.obs = obs
         self.shape = tuple(self.obs.shape)
-        with self.pymc_model:
+        with self.stat_model:
             self.dt = theano.shared(time_step, name="dt")
 
-            # step_init = 1
-            # states_init = []
-            x_sim, updates = theano.scan(fn=self.scheme, sequences=[time_series], outputs_info=[x_init], n_steps=self.shape[0])
+            x_sim, updates = theano.scan(fn=self.scheme, sequences=[self.priors["dynamic_noise"]], outputs_info=[self.priors["x_init"]], n_steps=self.shape[0])
+
+            amplitude_star = pm.Normal(name="amplitude_star", mu=0.0, sd=1.0)
+            amplitude = pm.Deterministic(name="amplitude", var=0.0 + amplitude_star)
+
+            offset_star = pm.Normal(name="offset_star", mu=0.0, sd=1.0)
+            offset = pm.Deterministic(name="offset", var=0.0 + offset_star)
 
             x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_sim + offset)
 
-            x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=obs_noise, shape=self.shape, observed=self.obs)
+            x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=self.priors["global_noise"], shape=self.shape, observed=self.obs)
 
-    def scheme(self, x_eta, x_prev):  # , step_prev):
-        # if step_prev == 1:
-        #     states_before.append(x_prev)
-        x_next = x_prev + self.dt * self.model_instance.pymc_dfun(x_prev, self.params) + x_eta  # * self.noise * tt.sqrt(self.dt)
-        # step_next = step_prev + 1
-
-        # states_updated = tt.concatenate([states_before, x_next])
-        # self.current_step += 1
-        return x_next  # , step_next
+    def scheme(self, x_eta, x_prev):
+        x_next = x_prev + self.dt * self.tvb_model.pymc_dfun(x_prev, self.priors, self.priors["node_coupling"]) + x_eta  # * self.noise * tt.sqrt(self.dt)
+        return x_next
 
     def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, max_treedepth: int, step_scale: float, save: bool = False):
-        with self.pymc_model:
+        with self.stat_model:
             self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept, max_treedepth=max_treedepth, step_scale=step_scale)
             posterior_predictive = pm.sample_posterior_predictive(trace=self.trace)
             self.inference_data = az.from_pymc3(trace=self.trace, posterior_predictive=posterior_predictive)
@@ -84,32 +70,11 @@ class NonCenteredModel:
 
         return self.inference_data
 
-    def model_criteria(self, criteria: List[str]):
-        out = dict()
-        if "WAIC" in criteria:
-            waic = az.waic(self.inference_data)  #, scale="deviance")
-            out["WAIC"] = waic.waic
-        if "LOO" in criteria:
-            loo = az.loo(self.inference_data)  #, scale="deviance")
-            out["LOO"] = loo.loo
+    def model_criteria(self):
+        waic = az.waic(self.inference_data)
+        loo = az.loo(self.inference_data)
 
-        map_estimate = None
-        if "AIC" in criteria:
-            with self.pymc_model:
-                map_estimate = pm.find_MAP()
-            aic = -2 * self.pymc_model.logp(map_estimate) + 2 * len(map_estimate)
-            out["AIC"] = aic
-        if "BIC" in criteria:
-            if map_estimate:
-                bic = -2 * self.pymc_model.logp(map_estimate) + len(map_estimate) * np.log(len(self.obs["xs"]))
-                out["BIC"] = bic
-            else:
-                with self.pymc_model:
-                    map_estimate = pm.find_MAP()
-                bic = -2 * self.pymc_model.logp(map_estimate) + len(map_estimate) * np.log(len(self.obs["xs"]))
-                out["BIC"] = bic
-
-        return out
+        return {"WAIC": waic.waic, "LOO": loo.loo}
 
     def plot_posterior_samples(self, init_params: Dict[str, float], save: bool = False):
         num_params = len(init_params)
@@ -125,6 +90,7 @@ class NonCenteredModel:
             ax = axes.reshape(-1)[i]
             ax.hist(posterior_, bins=100)
             ax.axvline(init_params[key], color="r", label="simulation parameter")
+            ax.set_xlim(xmin=-2*self.prior_stats[key]["sd"], xmax=2*self.prior_stats[key]["sd"])
             ax.set_title(key, fontsize=18)
             ax.tick_params(axis="both", labelsize=16)
         try:
@@ -157,6 +123,7 @@ class pymcModel:
         self.run_id = datetime.now().strftime("%Y-%m-%d_%H%M")
 
         self.priors = None
+        self.prior_stats = None
         self.obs = None
         self.shape = None
         self.dt = None
@@ -178,15 +145,11 @@ class pymcModel:
         with self.stat_model:
             self.dt = theano.shared(time_step, name="dt")
 
-            Nt = int(self.tvb_simulator.simulation_length)
             Nsv = len(self.tvb_simulator.model.state_variables)
             Nr = self.tvb_simulator.connectivity.number_of_regions
-            Ncv = self.tvb_simulator.history.n_cvar
-            Nc = 1
             idmax = self.tvb_simulator.connectivity.idelays.max()
-            cvars = self.tvb_simulator.history.cvars
 
-            x0_init = pm.Normal(name="x0_init", mu=0.0, sd=5.0, shape=(Nsv, Nr, 1))
+            x0_init = pm.Normal(name="x0_init", mu=0.0, sd=1.0, shape=(Nsv, Nr, 1))
             x_init = np.zeros((idmax + 1, Nsv, Nr, 1))
             x_init = theano.shared(x_init, name="x_init")
             x_init = tt.set_subtensor(x_init[-1], x0_init)
@@ -209,7 +172,7 @@ class pymcModel:
             taps = list(-1 * np.arange(np.unique(self.tvb_simulator.history.nnz_idelays).max() + 1) - 1)
             x_sim, updates = theano.scan(
                 fn=self.scheme,
-                sequences=[self.priors["integrator.noise"]],
+                sequences=[self.priors["dynamic_noise"]],
                 outputs_info=[dict(initial=x_init, taps=taps)],
                 n_steps=self.shape[0]
             )
@@ -223,7 +186,7 @@ class pymcModel:
 
                 x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_sim[:, self.tvb_simulator.model.cvar, :, :] + offset)
 
-                x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=self.priors["global.noise"], shape=self.shape, observed=self.obs)
+                x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=self.priors["global_noise"], shape=self.shape, observed=self.obs)
 
     def scheme(self, x_eta, *args):
         Nr = self.tvb_simulator.connectivity.number_of_regions
@@ -292,32 +255,11 @@ class pymcModel:
 
         return self.inference_data
 
-    def model_criteria(self, criteria: List[str]):
-        out = dict()
-        if "WAIC" in criteria:
-            waic = az.waic(self.inference_data, scale="deviance")
-            out["WAIC"] = waic.waic
-        if "LOO" in criteria:
-            loo = az.loo(self.inference_data, scale="deviance")
-            out["LOO"] = loo.loo
+    def model_criteria(self):
+        waic = az.waic(self.inference_data)
+        loo = az.loo(self.inference_data)
 
-        map_estimate = None
-        if "AIC" in criteria:
-            with self.stat_model:
-                map_estimate = pm.find_MAP()
-            aic = -2 * self.stat_model.logp(map_estimate) + 2 * len(map_estimate)
-            out["AIC"] = aic
-        if "BIC" in criteria:
-            if map_estimate:
-                bic = -2 * self.stat_model.logp(map_estimate) + len(map_estimate) * np.log(len(self.obs["xs"]))
-                out["BIC"] = bic
-            else:
-                with self.stat_model:
-                    map_estimate = pm.find_MAP()
-                bic = -2 * self.stat_model.logp(map_estimate) + len(map_estimate) * np.log(len(self.obs["xs"]))
-                out["BIC"] = bic
-
-        return out
+        return {"WAIC": waic.waic, "LOO": loo.loo}
 
     def plot_posterior_samples(self, init_params: Dict[str, float], save: bool = False):
         num_params = len(init_params)
@@ -333,6 +275,7 @@ class pymcModel:
             ax = axes.reshape(-1)[i]
             ax.hist(posterior_, bins=100)
             ax.axvline(init_params[key], color="r", label="simulation parameter")
+            ax.set_xlim(xmin=-2 * self.prior_stats[key]["sd"], xmax=2 * self.prior_stats[key]["sd"])
             ax.set_title(key, fontsize=18)
             ax.tick_params(axis="both", labelsize=16)
         try:

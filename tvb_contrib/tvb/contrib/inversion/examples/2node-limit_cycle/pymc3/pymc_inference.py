@@ -7,15 +7,8 @@ import tvb.simulator.integrators
 import tvb.simulator.coupling
 import tvb.simulator.monitors
 
-import matplotlib.pyplot as plt
 import numpy as np
-import arviz as az
 import pymc3 as pm
-import scipy
-import theano.tensor as tt
-import theano
-import math
-from tqdm import tqdm
 import pickle
 
 # Simulation parameters
@@ -80,11 +73,11 @@ if __name__ == "__main__":
     pymc_model = pymcModel(sim)
 
     with pymc_model.stat_model:
-        #a_star = pm.Normal(name="a_star", mu=0.0, sd=1.0)
-        #a = pm.Deterministic(name="a", var=2.0 + a_star)
+        # model_a_star = pm.Normal(name="model_a_star", mu=0.0, sd=1.0)
+        # model_a = pm.Deterministic(name="model_a", var=2.0 + model_a_star)
 
-        a_coupling_star = pm.Normal(name="a_coupling_star", mu=0.0, sd=1.0)
-        a_coupling = pm.Deterministic(name="a_coupling", var=0.1 + 0.05 * a_coupling_star)
+        coupling_a_star = pm.Normal(name="coupling_a_star", mu=0.0, sd=1.0)
+        coupling_a = pm.Deterministic(name="coupling_a", var=0.1 + 0.05 * coupling_a_star)
 
         BoundedNormal = pm.Bound(pm.Normal, lower=0.0)
 
@@ -92,34 +85,34 @@ if __name__ == "__main__":
         noise_gfun = pm.Deterministic(name="noise_gfun", var=0.05 + 0.1 * noise_gfun_star)
 
         noise_star = pm.Normal(name="noise_star", mu=0.0, sd=1.0, shape=(Nt, Nsv, Nr, 1))
-        noise = pm.Deterministic(name="noise", var=noise_gfun * noise_star)
+        dynamic_noise = pm.Deterministic(name="dynamic_noise", var=noise_gfun * noise_star)
 
-        epsilon = BoundedNormal(name="epsilon", mu=0.0, sd=1.0)
+        global_noise = BoundedNormal(name="global_noise", mu=0.0, sd=1.0)
 
         # Passing the prior distributions as dictionary. Also including fixed model parameters.
         priors = {
-            "a": np.array([simulation_params["a_sim"]]),
-            "b": np.array([simulation_params["b_sim"]]),
-            "c": np.array([simulation_params["c_sim"]]),
-            "d": np.array([simulation_params["d_sim"]]),
-            "I": np.array([simulation_params["I_sim"]]),
-            "tau": np.array([1.0]),
-            "e": np.array([3.0]),
-            "f": np.array([1.0]),
-            "g": np.array([0.0]),
-            "alpha": np.array([1.0]),
-            "beta": np.array([1.0]),
-            "gamma": np.array([1.0]),
-            "coupling.a": a_coupling,
-            "integrator.noise": noise,
-            "global.noise": epsilon,
+            "model_a": np.array([simulation_params["a_sim"]]),
+            "model_b": np.array([simulation_params["b_sim"]]),
+            "model_c": np.array([simulation_params["c_sim"]]),
+            "model_d": np.array([simulation_params["d_sim"]]),
+            "model_I": np.array([simulation_params["I_sim"]]),
+            "model_tau": np.array([1.0]),
+            "model_e": np.array([3.0]),
+            "model_f": np.array([1.0]),
+            "model_g": np.array([0.0]),
+            "model_alpha": np.array([1.0]),
+            "model_beta": np.array([1.0]),
+            "model_gamma": np.array([1.0]),
+            "coupling_a": coupling_a,
+            "dynamic_noise": dynamic_noise,
+            "global_noise": global_noise,
             "local_coupling": 0.0
         }
 
         pymc_model.prior_stats = {
-            "coupling.a": {"mean": 0.1, "sd": 0.05},
+            "coupling_a": {"mean": 0.1, "sd": 0.05},
             "noise_gfun": {"mean": 0.05, "sd": 0.1},
-            "global.epsilon": {"mean": 0.0, "sd": 1.0}
+            "global_epsilon": {"mean": 0.0, "sd": 1.0}
         }
 
     pymc_model.set_model(

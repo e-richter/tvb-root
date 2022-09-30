@@ -388,19 +388,19 @@ class Generic2dOscillator(ModelNumbaDfun):
         return deriv.T[..., numpy.newaxis]
 
     @staticmethod
-    def pymc_dfun(state, params):
+    def dfun_tensor(state, params, node_coupling):
         lc_0 = params["local_coupling"] * state[0, :, 0]
         vw_ = state
-        c_ = params["coupling"]
+        c_ = node_coupling
 
         V = vw_[0]
         V2 = V * V
         W = vw_[1]
 
         # TODO: find way to use numba guvectorize for calculation
-        dx_v = params["d"] * params["tau"] * (
-                params["alpha"] * W - params["f"] * V2 * V + params["e"] * V2 + params["g"] * V + params["gamma"] * params["I"] + params["gamma"] * c_[0] + lc_0)
-        dx_w = params["d"] * (params["a"] + params["b"] * V + params["c"] * V2 - params["beta"] * W) / params["tau"]
+        dx_v = params["model_d"] * params["model_tau"] * (
+                params["model_alpha"] * W - params["model_f"] * V2 * V + params["model_e"] * V2 + params["model_g"] * V + params["model_gamma"] * params["model_I"] + params["model_gamma"] * c_[0])
+        dx_w = params["model_d"] * (params["model_a"] + params["model_b"] * V + params["model_c"] * V2 - params["model_beta"] * W) / params["model_tau"]
 
         # dx_v.tag.test_value = numpy.ones([1,])
         # dx_w.tag.test_value = numpy.ones([1,])

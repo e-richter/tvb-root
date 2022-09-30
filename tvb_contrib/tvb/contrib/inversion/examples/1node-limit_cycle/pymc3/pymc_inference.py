@@ -1,16 +1,10 @@
 import tvb.simulator.models
 import tvb.simulator.integrators
-from tvb.contrib.inversion.pymcInference import NonCenteredModel
+from tvb.contrib.inversion.pymcInference import pymcModel1node
 
-import matplotlib.pyplot as plt
 import numpy as np
-import arviz as az
 import pymc3 as pm
-import scipy
-import theano.tensor as tt
 import theano
-import math
-from tqdm import tqdm
 import pickle
 
 # Simulation parameters
@@ -46,76 +40,64 @@ num_cores = 2
 
 
 if __name__ == "__main__":
-    ncModel = NonCenteredModel(oscillator_model)
+    pymc_model = pymcModel1node(oscillator_model)
 
-    with ncModel.pymc_model:
-        a_star = pm.Normal(name="a_star", mu=0.0, sd=1.0)
-        a = pm.Deterministic(name="a", var=2.0 + a_star)
+    with pymc_model.stat_model:
+        model_a_star = pm.Normal(name="model_a_star", mu=0.0, sd=1.0)
+        model_a = pm.Deterministic(name="model_a", var=2.0 + model_a_star)
         
-        b_star = pm.Normal(name="b_star", mu=0.0, sd=1.0)
-        b = pm.Deterministic(name="b", var=-10.0 + 5.0 * b_star)
+        model_b_star = pm.Normal(name="model_b_star", mu=0.0, sd=1.0)
+        model_b = pm.Deterministic(name="model_b", var=-10.0 + 5.0 * model_b_star)
         
-        #c_star = pm.Normal(name="c_star", mu=0.0, sd=1.0)
-        #c = pm.Deterministic(name="c", var=0.0 + 0.5 * c_star)
-
-        priors = {
-            "a": a,
-            "b": b,
-            "c": np.array([simulation_params["c_sim"]]),
-            "d": np.array([simulation_params["d_sim"]]),
-            "I": np.array([simulation_params["I_sim"]]),
-            "tau": np.array([1.0]),
-            "e": np.array([3.0]),
-            "f": np.array([1.0]),
-            "g": np.array([0.0]),
-            "alpha": np.array([1.0]),
-            "beta": np.array([1.0]),
-            "gamma": np.array([1.0])
-        }
-
-        consts = {
-            "coupling": np.zeros([2, 1, 1]),
-            "local_coupling": 0.0
-        }
+        # model_c_star = pm.Normal(name="model_c_star", mu=0.0, sd=1.0)
+        # model_c = pm.Deterministic(name="model_c", var=0.0 + 0.5 * model_c_star)
 
         x_init = theano.shared(X[0], name="x_init")
 
         BoundedNormal = pm.Bound(pm.Normal, lower=0.0)
 
-        noise_star = BoundedNormal(name="noise_star", mu=0.0, sd=1.0)
-        noise = pm.Deterministic(name="noise", var=0.05 + 0.1 * noise_star)
+        noise_gfun_star = BoundedNormal(name="noise_gfun_star", mu=0.0, sd=1.0)
+        noise_gfun = pm.Deterministic(name="noise_gfun", var=0.05 + 0.1 * noise_gfun_star)
 
-        x_t_star = pm.Normal(name="x_t_star", mu=0.0, sd=1.0, shape=tuple(shape))
-        x_t = pm.Deterministic(name="x_t", var=noise * x_t_star)
+        noise_star = pm.Normal(name="noise_star", mu=0.0, sd=1.0, shape=tuple(shape))
+        dynamic_noise = pm.Deterministic(name="dynamic_noise", var=noise_gfun * noise_star)
 
-        amplitude_star = pm.Normal(name="amplitude_star", mu=0.0, sd=1.0)
-        amplitude = pm.Deterministic(name="amplitude", var=0.0 + amplitude_star)
+        global_noise = BoundedNormal(name="global_noise", mu=0.0, sd=1.0)
 
-        offset_star = pm.Normal(name="offset_star", mu=0.0, sd=1.0)
-        offset = pm.Deterministic(name="offset", var=0.0 + offset_star)
-
-        epsilon = BoundedNormal(name="epsilon", mu=0.0, sd=1.0)
-
-        ncModel.prior_stats = {
-            "a": {"mean": 2.0, "sd": 1.0},
-            "b": {"mean": -10.0, "sd": 5.0},
-            "noise": {"mean": 0.05, "sd": 0.1},
-            "epsilon": {"mean": 0.0, "sd": 1.0}
+        priors = {
+            "model_a": model_a,
+            "model_b": model_b,
+            "model_c": np.array([simulation_params["c_sim"]]),
+            "model_d": np.array([simulation_params["d_sim"]]),
+            "model_I": np.array([simulation_params["I_sim"]]),
+            "model_tau": np.array([1.0]),
+            "model_e": np.array([3.0]),
+            "model_f": np.array([1.0]),
+            "model_g": np.array([0.0]),
+            "model_alpha": np.array([1.0]),
+            "model_beta": np.array([1.0]),
+            "model_gamma": np.array([1.0]),
+            "x_init": x_init,
+            "dynamic_noise": dynamic_noise,
+            "global_noise": global_noise,
+            "node_coupling": np.zeros([2, 1, 1]),
+            "local_coupling": 0.0
         }
 
-    ncModel.set_model(
+        pymc_model.prior_stats = {
+            "model_a": {"mean": 2.0, "sd": 1.0},
+            "model_b": {"mean": -10.0, "sd": 5.0},
+            "noise_gfun": {"mean": 0.05, "sd": 0.1},
+            "global_noise": {"mean": 0.0, "sd": 1.0}
+        }
+
+    pymc_model.set_model(
         priors=priors,
-        consts=consts,
         obs=X,
-        time_step=simulation_params["dt"],
-        x_init=x_init,
-        time_series=x_t,
-        amplitude=amplitude,
-        offset=offset,
-        obs_noise=epsilon
+        time_step=simulation_params["dt"]
     )
     
-    nc_data = ncModel.run_inference(
+    inference_data = pymc_model.run_inference(
         draws=draws,
         tune=tune,
         cores=num_cores,
@@ -125,4 +107,4 @@ if __name__ == "__main__":
         save=True
     )
 
-    ncModel.save(simulation_params=simulation_params.copy())
+    pymc_model.save(simulation_params=simulation_params.copy())

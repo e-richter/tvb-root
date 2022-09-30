@@ -488,6 +488,10 @@ class Difference(SparseCoupling):
     def post(self, gx):
         return self.a * gx
 
+    @staticmethod
+    def post_tensor(gx, params):
+        return params["coupling_a"] * gx
+
 
 class Kuramoto(SparseCoupling):
     r"""
