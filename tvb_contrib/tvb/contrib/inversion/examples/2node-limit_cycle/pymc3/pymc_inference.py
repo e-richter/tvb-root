@@ -1,4 +1,4 @@
-from tvb.simulator import Simulator
+from tvb.simulator.simulator import Simulator
 from tvb.datatypes.connectivity import Connectivity
 from tvb.contrib.inversion.pymcInference import pymcModel
 
@@ -71,41 +71,45 @@ draws = 500
 tune = 500
 num_cores = 2
 
+Nt = int(sim.simulation_length)
+Nsv = len(sim.model.state_variables)
+Nr = sim.connectivity.number_of_regions
+
 
 if __name__ == "__main__":
     pymc_model = pymcModel(sim)
 
     with pymc_model.stat_model:
-        a_star = pm.Normal(name="a_star", mu=0.0, sd=1.0)
-        a = pm.Deterministic(name="a", var=2.0 + a_star)
+        #a_star = pm.Normal(name="a_star", mu=0.0, sd=1.0)
+        #a = pm.Deterministic(name="a", var=2.0 + a_star)
 
         a_coupling_star = pm.Normal(name="a_coupling_star", mu=0.0, sd=1.0)
-        a_coupling = pm.Deterministic(name="coupling", var=0.1 + 0.05 * a_coupling_star)
+        a_coupling = pm.Deterministic(name="a_coupling", var=0.1 + 0.05 * a_coupling_star)
 
         BoundedNormal = pm.Bound(pm.Normal, lower=0.0)
 
         noise_gfun_star = BoundedNormal(name="noise_gfun_star", mu=0.0, sd=1.0)
         noise_gfun = pm.Deterministic(name="noise_gfun", var=0.05 + 0.1 * noise_gfun_star)
 
-        noise_star = pm.Normal(name="noise_star", mu=0.0, sd=1.0, shape=tuple(shape))
+        noise_star = pm.Normal(name="noise_star", mu=0.0, sd=1.0, shape=(Nt, Nsv, Nr, 1))
         noise = pm.Deterministic(name="noise", var=noise_gfun * noise_star)
 
         epsilon = BoundedNormal(name="epsilon", mu=0.0, sd=1.0)
 
         # Passing the prior distributions as dictionary. Also including fixed model parameters.
         priors = {
-            "model.a": a,
-            "model.b": np.array([simulation_params["b_sim"]]),
-            "model.c": np.array([simulation_params["c_sim"]]),
-            "model.d": np.array([simulation_params["d_sim"]]),
-            "model.I": np.array([simulation_params["I_sim"]]),
-            "model.tau": np.array([1.0]),
-            "model.e": np.array([3.0]),
-            "model.f": np.array([1.0]),
-            "model.g": np.array([0.0]),
-            "model.alpha": np.array([1.0]),
-            "model.beta": np.array([1.0]),
-            "model.gamma": np.array([1.0]),
+            "a": np.array([simulation_params["a_sim"]]),
+            "b": np.array([simulation_params["b_sim"]]),
+            "c": np.array([simulation_params["c_sim"]]),
+            "d": np.array([simulation_params["d_sim"]]),
+            "I": np.array([simulation_params["I_sim"]]),
+            "tau": np.array([1.0]),
+            "e": np.array([3.0]),
+            "f": np.array([1.0]),
+            "g": np.array([0.0]),
+            "alpha": np.array([1.0]),
+            "beta": np.array([1.0]),
+            "gamma": np.array([1.0]),
             "coupling.a": a_coupling,
             "integrator.noise": noise,
             "global.noise": epsilon,
@@ -113,7 +117,6 @@ if __name__ == "__main__":
         }
 
         pymc_model.prior_stats = {
-            "model.a": {"mean": 2.0, "sd": 1.0},
             "coupling.a": {"mean": 0.1, "sd": 0.05},
             "noise_gfun": {"mean": 0.05, "sd": 0.1},
             "global.epsilon": {"mean": 0.0, "sd": 1.0}
@@ -131,7 +134,7 @@ if __name__ == "__main__":
         cores=num_cores,
         target_accept=0.9,
         max_treedepth=20,
-        step_scale=0.25,
+        step_scale=0.5,
         save=True
     )
 
