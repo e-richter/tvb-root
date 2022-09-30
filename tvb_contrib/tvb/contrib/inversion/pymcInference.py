@@ -55,7 +55,7 @@ class pymcModel1node:
             x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=self.priors["global_noise"], shape=self.shape, observed=self.obs)
 
     def scheme(self, x_eta, x_prev):
-        x_next = x_prev + self.dt * self.tvb_model.pymc_dfun(x_prev, self.priors, self.priors["node_coupling"]) + x_eta  # * self.noise * tt.sqrt(self.dt)
+        x_next = x_prev + self.dt * self.tvb_model.dfun_tensor(x_prev, self.priors, self.priors["node_coupling"]) + x_eta  # * self.noise * tt.sqrt(self.dt)
         return x_next
 
     def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, max_treedepth: int, step_scale: float, save: bool = False):
@@ -209,11 +209,11 @@ class pymcModel:
         lri, nzr = self.tvb_simulator.coupling._lri(self.tvb_simulator.history.nnz_row_el_idx)
         try:
             sum_[:, nzr] = np.add.reduceat(weights_col * pre, lri, axis=1)
-            node_coupling = self.tvb_simulator.coupling.pymc_post(sum_, self.priors)
+            node_coupling = self.tvb_simulator.coupling.post_tensor(sum_, self.priors)
         except:
-            node_coupling = self.tvb_simulator.coupling.pymc_post(sum_, self.priors)
+            node_coupling = self.tvb_simulator.coupling.post_tensor(sum_, self.priors)
 
-        x_next = x_prev + self.dt * self.tvb_simulator.model.pymc_dfun(x_prev, self.priors, node_coupling) + x_eta
+        x_next = x_prev + self.dt * self.tvb_simulator.model.dfun_tensor(x_prev, self.priors, node_coupling) + x_eta
         return x_next
 
     def compute_node_coupling(self, it, nc, X_init, x_init, history_init):
