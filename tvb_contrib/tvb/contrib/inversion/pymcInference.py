@@ -295,7 +295,7 @@ class pymcModel:
     def save(self, simulation_params: dict):
         with open(f"pymc_data/inference_data/{self.run_id}_instance.pkl", "wb") as out:
             tmp = self.__dict__.copy()
-            del tmp["tvb_model"]
+            del tmp["tvb_simulator"]
             del simulation_params["simulation"]
             pickle.dump({**tmp, "simulation_params": simulation_params}, out, pickle.HIGHEST_PROTOCOL)
             out.close()
