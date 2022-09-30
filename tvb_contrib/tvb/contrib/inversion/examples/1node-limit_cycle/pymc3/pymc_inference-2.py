@@ -55,13 +55,13 @@ if __name__ == "__main__":
         b_star = pm.Normal(name="b_star", mu=0.0, sd=1.0)
         b = pm.Deterministic(name="b", var=-10.0 + 5.0 * b_star)
         
-        #c_star = pm.Normal(name="c_star", mu=0.0, sd=1.0)
-        #c = pm.Deterministic(name="c", var=0.0 + 0.5 * c_star)
+        c_star = pm.Normal(name="c_star", mu=0.0, sd=1.0)
+        c = pm.Deterministic(name="c", var=0.0 + c_star)
 
         priors = {
             "a": a,
             "b": b,
-            "c": np.array([simulation_params["c_sim"]]),
+            "c": c,
             "d": np.array([simulation_params["d_sim"]]),
             "I": np.array([simulation_params["I_sim"]]),
             "tau": np.array([1.0]),
@@ -99,6 +99,7 @@ if __name__ == "__main__":
         ncModel.prior_stats = {
             "a": {"mean": 2.0, "sd": 1.0},
             "b": {"mean": -10.0, "sd": 5.0},
+            "c": {"mean": 0.0, "sd": 1.0},
             "noise": {"mean": 0.05, "sd": 0.1},
             "epsilon": {"mean": 0.0, "sd": 1.0}
         }
