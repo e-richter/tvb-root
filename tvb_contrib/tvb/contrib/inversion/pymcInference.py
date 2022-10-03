@@ -281,7 +281,11 @@ class pymcModel:
             ax = axes.reshape(-1)[i]
             ax.hist(posterior_, bins=100)
             ax.axvline(init_params[key], color="r", label="simulation parameter")
-            ax.set_xlim(xmin=-2 * self.prior_stats[key]["sd"], xmax=2 * self.prior_stats[key]["sd"])
+            ax.axvline(self.prior_stats[key]["mean"], color="r", linestyle="-.", label="prior mean")
+            ax.set_xlim(
+                xmin=self.prior_stats[key]["mean"] - 2 * self.prior_stats[key]["sd"],
+                xmax=self.prior_stats[key]["mean"] + 2 * self.prior_stats[key]["sd"]
+            )
             ax.set_title(key, fontsize=18)
             ax.tick_params(axis="both", labelsize=16)
         try:
