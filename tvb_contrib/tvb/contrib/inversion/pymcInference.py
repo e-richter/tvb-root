@@ -287,6 +287,22 @@ class pymcModel:
 
         return {"WAIC": waic.waic, "LOO": loo.loo}
 
+    def posterior_zscore(self, init_params: Dict[str, float]):
+        z = np.empty(len(init_params))
+        for i, (key, value) in enumerate(init_params.items()):
+            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            z_ = np.abs(value - posterior_.mean()) / posterior_.std()
+            z[i] = z_
+        return z
+
+    def posterior_shrinkage(self):
+        s = np.empty(len(self.prior_stats))
+        for i, (key, value) in enumerate(self.prior_stats.items()):
+            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            s_ = 1 - (posterior_.std()**2 / value["sd"]**2)
+            s[i] = s_
+        return s
+
     def plot_posterior_samples(self, init_params: Dict[str, float], save: bool = False):
         num_params = len(init_params)
         nrows = int(np.ceil(np.sqrt(num_params)))
