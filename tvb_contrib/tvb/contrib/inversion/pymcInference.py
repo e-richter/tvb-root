@@ -76,6 +76,22 @@ class pymcModel1node:
 
         return {"WAIC": waic.waic, "LOO": loo.loo}
 
+    def posterior_zscore(self, init_params: Dict[str, float]):
+        z = np.empty(len(init_params))
+        for i, (key, value) in enumerate(init_params.items()):
+            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            z_ = np.abs(value - posterior_.mean()) / posterior_.std()
+            z[i] = z_
+        return z
+
+    def posterior_shrinkage(self):
+        s = np.empty(len(self.prior_stats))
+        for i, (key, value) in enumerate(self.prior_stats.items()):
+            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            s_ = 1 - (posterior_.std()**2 / value["sd"]**2)
+            s[i] = s_
+        return s
+
     def plot_posterior_samples(self, init_params: Dict[str, float], save: bool = False):
         num_params = len(init_params)
         nrows = int(np.ceil(np.sqrt(num_params)))
@@ -90,7 +106,11 @@ class pymcModel1node:
             ax = axes.reshape(-1)[i]
             ax.hist(posterior_, bins=100)
             ax.axvline(init_params[key], color="r", label="simulation parameter")
-            ax.set_xlim(xmin=-2*self.prior_stats[key]["sd"], xmax=2*self.prior_stats[key]["sd"])
+            ax.axvline(self.prior_stats[key]["mean"], color="r", linestyle="-.", label="prior mean")
+            ax.set_xlim(
+                xmin=self.prior_stats[key]["mean"] - 2 * self.prior_stats[key]["sd"],
+                xmax=self.prior_stats[key]["mean"] + 2 * self.prior_stats[key]["sd"]
+            )
             ax.set_title(key, fontsize=18)
             ax.tick_params(axis="both", labelsize=16)
         try:
