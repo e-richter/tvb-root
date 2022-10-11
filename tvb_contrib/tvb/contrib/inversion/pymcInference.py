@@ -239,7 +239,9 @@ class pymcModel:
         except:
             node_coupling = self.tvb_simulator.coupling.post_tensor(sum_, self.priors)
 
-        x_next = x_prev + self.dt * self.tvb_simulator.model.dfun_tensor(x_prev, self.priors, node_coupling) + x_eta
+        m_dx_tn = self.tvb_simulator.model.dfun_tensor(x_prev, self.priors, node_coupling)
+        inter = x_prev + self.dt * m_dx_tn + x_eta
+        x_next = x_prev + (m_dx_tn + self.tvb_simulator.model.dfun_tensor(inter, self.priors, node_coupling)) * self.dt / 2.0 + x_eta
         return x_next
 
     def compute_node_coupling(self, it, nc, X_init, x_init, history_init):
