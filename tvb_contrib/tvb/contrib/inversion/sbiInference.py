@@ -276,12 +276,19 @@ class sbiModel:
         ncols = int(np.ceil(np.sqrt(num_params)))
         nrows = int(np.ceil(num_params / ncols))
 
+        prior_idx = {"_".join([value[1], value[2]]): value[0] for value in self.prior_keys}
+
         fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(30, 16))
         for i, (key, value) in enumerate(init_params.items()):
             posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
             ax = axes.reshape(-1)[i]
             ax.hist(posterior_, bins=bins)
             ax.axvline(init_params[key], color="r", label="simulation parameter")
+            ax.axvline(self.priors.loc.numpy()[prior_idx[key]], color="r", linestyle="-.", label="prior mean")
+            ax.set_xlim(
+                xmin=self.priors.loc.numpy()[prior_idx[key]] - 2 * np.diag(self.priors.scale_tril)[prior_idx[key]],
+                xmax=self.priors.loc.numpy()[prior_idx[key]] + 2 * np.diag(self.priors.scale_tril)[prior_idx[key]]
+            )
             ax.set_title(key, fontsize=18)
             ax.tick_params(axis="both", labelsize=16)
         axes[0, 0].legend(fontsize=18)
