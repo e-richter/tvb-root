@@ -109,8 +109,8 @@ class sbiModel:
                 continue
             if "model" in target:
                 model_.__dict__[key] = np.array([float(params[i])])
-            elif "integrator" in target:
-                integrator_.__dict__[key] = np.abs(np.array([float(params[i])]))
+            elif "integrator.noise" in target:
+                integrator_.noise.__dict__[key] = np.abs(np.array([float(params[i])]))
 
         epsilon = torch.abs(params[[i for (i, key, _) in self.prior_keys if key == "epsilon"][0]])
 
