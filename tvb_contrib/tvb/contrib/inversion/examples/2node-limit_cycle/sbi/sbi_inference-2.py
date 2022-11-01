@@ -7,7 +7,7 @@ import pickle
 
 from tvb.simulator.simulator import Simulator
 from tvb.datatypes.connectivity import Connectivity
-from tvb.contrib.inversion.sbiInference import sbiModel
+from tvb.contrib.inversion.sbiInference import sbiModel, sbiPrior
 
 import tvb.simulator.models
 import tvb.simulator.integrators
@@ -16,6 +16,16 @@ import tvb.simulator.monitors
 
 with open('../limit-cycle_simulation.pkl', 'rb') as f:
     simulation_params = pickle.load(f)
+
+X = simulation_params["simulation"]
+
+# Connectivity
+connectivity = Connectivity()
+connectivity.weights = np.array([[0., 2.], [2., 0.]])
+connectivity.region_labels = np.array(["R1", "R2"])
+connectivity.centres = np.array([[0.1, 0.1, 0.1], [0.2, 0.1, 0.1]])
+connectivity.tract_lengths = np.array([[0., 2.5], [2.5, 0.]])
+connectivity.configure()
 
 # Model
 oscillator_model = getattr(tvb.simulator.models, simulation_params["model"])(
@@ -30,46 +40,47 @@ oscillator_model.configure()
 # Integrator
 integrator = getattr(tvb.simulator.integrators, simulation_params["integrator"])(dt=simulation_params["dt"])
 integrator.noise.nsig = np.array([simulation_params["nsig"]])
-integrator.noise.configure()
-integrator.noise.configure_white(dt=integrator.dt)
-integrator.set_random_state(random_state=None)
 integrator.configure()
-integrator.configure_boundaries(oscillator_model)
 
-X = simulation_params["simulation"]
+# Global coupling
+coupling = getattr(tvb.simulator.coupling, simulation_params["coupling"])()
 
-prior_vars = {
-    "model": {
-        "a": [1.5, 1.0],
-        "b": [-11.0, 5.0],
-        "c": [0.1, 0.5],
-        # "d": [0.02, 0.01],
-        "I": [0.1, 0.5],
-        # "tau": [1.0, 0.5]
-    },
-    "integrator.noise": {
-        "nsig": [0.003, 0.0015]
-    },
-    "global": {
-        "epsilon": [0.0, 1.0]
-    },
-}
+# Monitor
+monitor = getattr(tvb.simulator.monitors, simulation_params["monitor"])()
+
+# Simulator
+sim = Simulator(
+    model=oscillator_model,
+    connectivity=connectivity,
+    coupling=coupling,
+    integrator=integrator,
+    monitors=(monitor,),
+    simulation_length=simulation_params["simulation_length"]
+)
+
+sim.configure()
+
+prior = sbiPrior(
+    ["a", "b", "c", "I", "a", "nsig", "noise"],
+    ["model", "model", "model", "model", "coupling", "integrator.noise", "global"],
+    ["Normal", "Normal", "Normal", "Normal", "Normal", "LogNormal", "HalfNormal"],
+    [2.0, -10.0, 0.0, 0.0, 0.1, 0.003, 0.0],
+    [1.0, 5.0, 0.1, 0.1, 0.1, 0.001, 0.1]
+)
 
 
 def job(i):
     snpe_model = sbiModel(
         method="SNPE",
         obs=X,
-        model_instance=deepcopy(oscillator_model),
-        integrator_instance=deepcopy(integrator)
+        simulator_instance=deepcopy(sim)
     )
 
     snpe_model.run_inference(
-        prior_vars=prior_vars,
-        prior_dist="Normal",
-        num_simulations=100000,
+        prior=prior,
+        num_simulations=75000,
         num_workers=8,
-        num_samples=2000,
+        num_samples=2000
     )
 
     _ = snpe_model.to_arviz_data(num_workers=8)

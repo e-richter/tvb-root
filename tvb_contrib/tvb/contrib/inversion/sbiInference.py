@@ -21,7 +21,7 @@ from sbi import utils as sbi_utils
 from sbi import analysis as sbi_analysis
 from sbi.inference.base import infer, simulate_for_sbi
 from sbi.simulators.simutils import tqdm_joblib
-from sbi.utils.user_input_checks import prepare_for_sbi
+from sbi.utils.user_input_checks import prepare_for_sbi, process_prior
 from sbi.inference.posteriors.base_posterior import NeuralPosterior
 from torch.distributions import Distribution
 
@@ -53,7 +53,7 @@ class sbiModel:
         self.obs = obs
         self.shape = self.obs.shape
         self.neural_net = None
-        self.priors = None
+        self.prior = None
 
         self.posterior = None
         self.posterior_samples = None
@@ -68,20 +68,16 @@ class sbiModel:
 
         sim_ = deepcopy(self.simulator_instance)
 
-        for (i, key, target) in self.prior_keys:
+        for (i, key, target) in self.prior.identifier:
             if target == "global":
                 continue
-            if "noise" in target:
-                operator.attrgetter(target)(sim_).__dict__[key] = np.abs(np.array([float(params[i])]))
-            else:
-                operator.attrgetter(target)(sim_).__dict__[key] = np.array([float(params[i])])
-            # getattr(sim_, target).__dict__[key] = np.asarray(params[i])
+            operator.attrgetter(target)(sim_).__dict__[key] = np.array([float(params[i])])
 
         sim_.configure()
 
         # amplitude = params[[i for (i, key, _) in self.prior_keys if key == "amplitude"][0]]
         # offset = params[[i for (i, key, _) in self.prior_keys if key == "offset"][0]]
-        epsilon = torch.abs(params[[i for (i, key, _) in self.prior_keys if key == "epsilon"][0]])
+        epsilon = params[[i for (i, key, _) in self.prior.identifier if key == "noise"][0]]
 
         (t, X), = sim_.run()
 
@@ -104,15 +100,15 @@ class sbiModel:
         model_ = deepcopy(self.model_instance)
         integrator_ = deepcopy(self.integrator_instance)
 
-        for (i, key, target) in self.prior_keys:
+        for (i, key, target) in self.prior.identifier:
             if target == "global":
                 continue
             if "model" in target:
                 model_.__dict__[key] = np.array([float(params[i])])
             elif "integrator.noise" in target:
-                integrator_.noise.__dict__[key] = np.abs(np.array([float(params[i])]))
+                integrator_.noise.__dict__[key] = np.array([float(params[i])])
 
-        epsilon = torch.abs(params[[i for (i, key, _) in self.prior_keys if key == "epsilon"][0]])
+        epsilon = params[[i for (i, key, _) in self.prior.identifier if key == "noise"][0]]
 
         model_.configure()
         integrator_.noise.configure()
@@ -152,8 +148,7 @@ class sbiModel:
 
     def run_inference(
             self,
-            prior_vars: Dict[str, List],
-            prior_dist: Literal["Normal", "Uniform"],
+            prior,
             num_simulations: int,
             num_workers: int,
             num_samples: int,
@@ -161,12 +156,12 @@ class sbiModel:
     ):
 
         self.neural_net = neural_net
-        self.priors = self._set_priors(prior_vars=prior_vars, prior_dist=prior_dist)
+        self.prior = prior
 
         self.num_simulations = num_simulations
         self.posterior, self.density_estimator, self.simulation_params = infer_main(
             simulator=self.simulation_wrapper,
-            prior=self.priors,
+            prior=self.prior.priors,
             method=self.method,
             neural_net=self.neural_net,
             num_simulations=num_simulations,
@@ -207,13 +202,13 @@ class sbiModel:
     def to_arviz_data(self, num_workers: int, save: bool = False):
         X_posterior_predictive, X_simulated = self.simulations_from_samples(num_workers=num_workers)
 
-        epsilon = self.posterior_samples[:, [i for (i, key, _) in self.prior_keys if key == "epsilon"][0]]
-        log_probability = self.log_probability(X_posterior_predictive, X_simulated, sigma=epsilon)
+        # epsilon = self.posterior_samples[:, [i for (i, key, _) in self.prior.identifier if key == "noise"][0]]
+        # log_probability = self.log_probability(X_posterior_predictive, X_simulated, sigma=epsilon)
 
         self.inference_data = az.from_dict(
-            posterior=dict(zip(["_".join([key, target]) for i, key, target in self.prior_keys], np.asarray(self.posterior_samples.T))),
+            posterior=dict(zip(["_".join([key, target]) for i, key, target in self.prior.identifier], np.asarray(self.posterior_samples.T))),
             posterior_predictive={"x_obs": X_posterior_predictive.numpy().reshape((1, len(self.posterior_samples), *self.shape), order="F")},
-            log_likelihood={"x_obs": log_probability.numpy().reshape((1, len(self.posterior_samples), *self.shape), order="F")},
+            # log_likelihood={"x_obs": log_probability.numpy().reshape((1, len(self.posterior_samples), *self.shape), order="F")},
             observed_data={"x_obs": self.obs.reshape(self.shape, order="F")}
         )
 
@@ -231,7 +226,7 @@ class sbiModel:
         return z
 
     def posterior_shrinkage(self):
-        s = 1 - (self.posterior_samples.std(dim=0)**2 / torch.diag(self.priors.scale_tril)**2)
+        s = 1 - (self.posterior_samples.std(dim=0)**2 / np.array([self.prior.scale])**2)
         return s
 
     def log_probability(self, X_pp: torch.Tensor, X_sim: torch.Tensor, sigma: Union[float, torch.Tensor]):
@@ -276,18 +271,22 @@ class sbiModel:
         ncols = int(np.ceil(np.sqrt(num_params)))
         nrows = int(np.ceil(num_params / ncols))
 
-        prior_idx = {"_".join([value[1], value[2]]): value[0] for value in self.prior_keys}
+        prior_idx = {"_".join([value[1], value[2]]): value[0] for value in self.prior.identifier}
 
         fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(30, 16))
+        for ax in axes.reshape(-1):
+            ax.set_axis_off()
         for i, (key, value) in enumerate(init_params.items()):
             posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
             ax = axes.reshape(-1)[i]
-            ax.hist(posterior_, bins=bins)
+            ax.set_axis_on()
+            ax.hist(posterior_, bins=bins, alpha=0.5)
             ax.axvline(init_params[key], color="r", label="simulation parameter")
-            ax.axvline(self.priors.loc.numpy()[prior_idx[key]], color="r", linestyle="-.", label="prior mean")
+            ax.axvline(np.array(self.prior.location)[prior_idx[key]], color="r", linestyle="-.", label="prior mean")
+            ax.axvline(posterior_.mean(), color="k", label="posterior mean")
             ax.set_xlim(
-                xmin=self.priors.loc.numpy()[prior_idx[key]] - 2 * np.diag(self.priors.scale_tril)[prior_idx[key]],
-                xmax=self.priors.loc.numpy()[prior_idx[key]] + 2 * np.diag(self.priors.scale_tril)[prior_idx[key]]
+                xmin=np.array(self.prior.location)[prior_idx[key]] - 3 * np.array(self.prior.scale)[prior_idx[key]],
+                xmax=np.array(self.prior.location)[prior_idx[key]] + 3 * np.array(self.prior.scale)[prior_idx[key]]
             )
             ax.set_title(key, fontsize=18)
             ax.tick_params(axis="both", labelsize=16)
@@ -312,52 +311,109 @@ class sbiModel:
             tmp = pickle.load(out)
             self.__dict__.update(tmp)
 
-    def _set_priors(self, prior_vars, prior_dist):
+    # def _set_priors(self, prior_vars, prior_dist):
+    #
+    #     if prior_dist == "Normal":
+    #         prior_mean = [v[0] for v in list(itertools.chain(*[list(w.values()) for _, w in prior_vars.items()]))]
+    #         prior_sd = [v[1] for v in list(itertools.chain(*[list(w.values()) for _, w in prior_vars.items()]))]
+    #
+    #         # self.prior_keys = [(i, key, value["for"]) for i, (key, value) in enumerate(prior_vars.items())]
+    #         targets = []
+    #         keys = []
+    #         for target, v in prior_vars.items():
+    #             targets.append([target] * len(list(v.keys())))
+    #             keys.append(list(v.keys()))
+    #         targets = list(itertools.chain(*targets))
+    #         keys = list(itertools.chain(*keys))
+    #         self.prior_keys = []
+    #         for i, (key, target) in enumerate(zip(keys, targets)):
+    #             self.prior_keys.append((i, key, target))
+    #
+    #         prior_loc = []
+    #         prior_scale = []
+    #         for mean, sd in zip(prior_mean, prior_sd):
+    #             prior_loc.append(torch.as_tensor(np.array([mean])))
+    #             prior_scale.append(torch.as_tensor(np.array([sd])))
+    #
+    #         prior_loc = torch.cat(prior_loc)
+    #         prior_scale = torch.diag(torch.cat(prior_scale))
+    #
+    #         return torch.distributions.MultivariateNormal(loc=prior_loc, scale_tril=prior_scale)
+    #
+    #     elif prior_dist == "Uniform":
+    #         prior_min = [(v[0] - v[1]) for v in list(itertools.chain(*[list(w.values()) for _, w in prior_vars.items()]))]
+    #         prior_max = [(v[0] + v[1]) for v in list(itertools.chain(*[list(w.values()) for _, w in prior_vars.items()]))]
+    #
+    #         # self.prior_keys = [(i, key, value["for"]) for i, (key, value) in enumerate(prior_vars.items())]
+    #         targets = []
+    #         keys = []
+    #         for target, v in prior_vars.items():
+    #             targets.append([target] * len(list(v.keys())))
+    #             keys.append(list(v.keys()))
+    #         targets = list(itertools.chain(*targets))
+    #         keys = list(itertools.chain(*keys))
+    #         self.prior_keys = []
+    #         for i, (key, target) in enumerate(zip(keys, targets)):
+    #             self.prior_keys.append((i, key, target))
+    #
+    #         return sbi_utils.torchutils.BoxUniform(low=torch.as_tensor(prior_min), high=torch.as_tensor(prior_max))
 
-        if prior_dist == "Normal":
-            prior_mean = [v[0] for v in list(itertools.chain(*[list(w.values()) for _, w in prior_vars.items()]))]
-            prior_sd = [v[1] for v in list(itertools.chain(*[list(w.values()) for _, w in prior_vars.items()]))]
-            
-            # self.prior_keys = [(i, key, value["for"]) for i, (key, value) in enumerate(prior_vars.items())]
-            targets = []
-            keys = []
-            for target, v in prior_vars.items():
-                targets.append([target] * len(list(v.keys())))
-                keys.append(list(v.keys()))
-            targets = list(itertools.chain(*targets))
-            keys = list(itertools.chain(*keys))
-            self.prior_keys = []
-            for i, (key, target) in enumerate(zip(keys, targets)):
-                self.prior_keys.append((i, key, target))
 
-            prior_loc = []
-            prior_scale = []
-            for mean, sd in zip(prior_mean, prior_sd):
-                prior_loc.append(torch.as_tensor(np.array([mean])))
-                prior_scale.append(torch.as_tensor(np.array([sd])))
+class sbiPrior:
+    def __init__(
+            self,
+            parameter_name: list,
+            target_module: list,
+            prior_distribution: list,
+            location: list,
+            scale: list
+    ):
 
-            prior_loc = torch.cat(prior_loc)
-            prior_scale = torch.diag(torch.cat(prior_scale))
+        if not len(parameter_name) == len(target_module) == len(prior_distribution) == len(location) == len(scale):
+            raise Exception("Arguments are not of the same length.")
 
-            return torch.distributions.MultivariateNormal(loc=prior_loc, scale_tril=prior_scale)
+        self.parameter_name = parameter_name
+        self.target_module = target_module
+        self.prior_distribution = prior_distribution
+        self.location = location
+        self.scale = scale
 
-        elif prior_dist == "Uniform":
-            prior_min = [(v[0] - v[1]) for v in list(itertools.chain(*[list(w.values()) for _, w in prior_vars.items()]))]
-            prior_max = [(v[0] + v[1]) for v in list(itertools.chain(*[list(w.values()) for _, w in prior_vars.items()]))]
-            
-            # self.prior_keys = [(i, key, value["for"]) for i, (key, value) in enumerate(prior_vars.items())]
-            targets = []
-            keys = []
-            for target, v in prior_vars.items():
-                targets.append([target] * len(list(v.keys())))
-                keys.append(list(v.keys()))
-            targets = list(itertools.chain(*targets))
-            keys = list(itertools.chain(*keys))
-            self.prior_keys = []
-            for i, (key, target) in enumerate(zip(keys, targets)):
-                self.prior_keys.append((i, key, target))
+        self.num_params = len(self.parameter_name)
+        self.priors = None
+        self.identifier = None
 
-            return sbi_utils.torchutils.BoxUniform(low=torch.as_tensor(prior_min), high=torch.as_tensor(prior_max))
+        self.process_prior_information()
+        self.process_targets()
+
+    def process_prior_information(self):
+        priors = []
+        for param, target, dist, loc, scale in zip(
+                self.parameter_name, self.target_module, self.prior_distribution, self.location, self.scale):
+
+            if dist == "Normal":
+                prior_ = getattr(torch.distributions, dist)(loc=torch.Tensor([loc]), scale=torch.Tensor([scale]))
+                priors.append(prior_)
+            elif dist == "LogNormal":
+                loc_ = np.log(loc ** 2 / np.sqrt(loc ** 2 + scale ** 2))
+                scale_ = np.log(1 + scale ** 2 / loc ** 2)
+                prior_ = getattr(torch.distributions, dist)(loc=torch.Tensor([loc_]), scale=torch.Tensor([scale_]))
+                priors.append(prior_)
+            elif dist == "Uniform":
+                prior_ = getattr(torch.distributions, dist)(low=torch.Tensor([loc - scale]), high=torch.Tensor([loc + scale]))
+                priors.append(prior_)
+            elif dist == "HalfNormal":
+                prior_ = getattr(torch.distributions, dist)(scale=torch.Tensor([scale]))
+                priors.append(prior_)
+            else:
+                raise NotImplementedError(
+                    f"{dist} not supported yet. Please use on of the following 'Normal', 'LogNormal', 'Uniform', 'HalfNormal'.")
+
+        self.priors, _, _ = process_prior(priors)
+
+    def process_targets(self):
+        self.identifier = []
+        for i, (param, target) in enumerate(zip(self.parameter_name, self.target_module)):
+            self.identifier.append((i, param, target))
 
 
 def infer_main(
