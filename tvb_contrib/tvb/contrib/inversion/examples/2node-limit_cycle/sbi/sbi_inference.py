@@ -7,25 +7,24 @@ import pickle
 
 from tvb.simulator.simulator import Simulator
 from tvb.datatypes.connectivity import Connectivity
-from tvb.contrib.inversion.sbiInference import sbiModel
+from tvb.contrib.inversion.sbiInference import sbiModel, sbiPrior
 
 import tvb.simulator.models
 import tvb.simulator.integrators
 import tvb.simulator.coupling
 import tvb.simulator.monitors
 
-
 with open('../limit-cycle_simulation.pkl', 'rb') as f:
     simulation_params = pickle.load(f)
-    
+
 X = simulation_params["simulation"]
 
 # Connectivity
 connectivity = Connectivity()
-connectivity.weights = np.array([[0., 2/3], [2/3, 0.]])
+connectivity.weights = np.array([[0., 2.], [2., 0.]])
 connectivity.region_labels = np.array(["R1", "R2"])
 connectivity.centres = np.array([[0.1, 0.1, 0.1], [0.2, 0.1, 0.1]])
-connectivity.tract_lengths = np.array([[0., 0.1], [0.1, 0.]])
+connectivity.tract_lengths = np.array([[0., 2.5], [2.5, 0.]])
 connectivity.configure()
 
 # Model
@@ -61,46 +60,54 @@ sim = Simulator(
 
 sim.configure()
 
-prior_vars = {
-    "model": {
-        "a": [2.0, 0.1],
-        "b": [-10.0, 0.1],
-        "c": [0.0, 0.01],
-        "d": [0.02, 0.01],
-        "I": [0.0, 0.01],
-    },
-    "coupling": {
-        "a": [0.1, 0.01]
-    },
-    "integrator.noise" :{
-        "nsig": [0.003, 0.002]
-    },
-    "global": {
-        "epsilon": [0.0, 0.01]
-    },
-}
+prior = sbiPrior(
+    ["a", "a", "nsig", "noise"],
+    ["model", "coupling", "integrator.noise", "global"],
+    ["Normal", "Normal", "LogNormal", "HalfNormal"],
+    [2.0, 0.1, 0.003, 0.0],
+    [1.0, 0.1, 0.001, 0.1]
+)
+
+# prior_vars = {
+#     "model": {
+#         "a": [2.0, 1.0],
+#         "b": [-10.0, 5.0],
+#         "c": [0.0, 0.5],
+#         "I": [0.0, 0.5]
+#     },
+#     "coupling": {
+#         "a": [0.1, 0.5]
+#     },
+#     "integrator.noise": {
+#         "nsig": [0.003, 0.002]
+#     },
+#     "global": {
+#         "epsilon": [0.0, 0.5]
+#     },
+# }
 
 
 def job(i):
     snpe_model = sbiModel(
-        simulator_instance=deepcopy(sim),
         method="SNPE",
-        obs=X
+        obs=X,
+        simulator_instance=deepcopy(sim)
     )
 
     snpe_model.run_inference(
-        prior_vars=prior_vars,
-        prior_dist="Normal",
-        num_simulations=5000,
-        num_workers=4,
-        num_samples=2000,
+        prior=prior,
+        # prior_vars=prior_vars,
+        # prior_dist="Normal",
+        num_simulations=75000,
+        num_workers=8,
+        num_samples=2000
     )
 
-    _ = snpe_model.to_arviz_data(num_workers=4)
+    _ = snpe_model.to_arviz_data(num_workers=8)
 
     snpe_model.save(simulation_params=simulation_params.copy())
 
 
 if __name__ == "__main__":
-    num_inferences = 6
+    num_inferences = 4
     _ = Parallel(n_jobs=num_inferences)(delayed(job)(i) for i in range(num_inferences))

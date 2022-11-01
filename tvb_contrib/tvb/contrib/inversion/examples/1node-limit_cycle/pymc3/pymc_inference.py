@@ -34,23 +34,31 @@ X = simulation_params["simulation"]
 
 # global inference parameters
 shape = X.shape
-draws = 500
-tune = 500
-num_cores = 2
-
+draws = 400
+tune = 400
+num_cores = 4
 
 if __name__ == "__main__":
     pymc_model = pymcModel1node(oscillator_model)
 
     with pymc_model.stat_model:
         model_a_star = pm.Normal(name="model_a_star", mu=0.0, sd=1.0)
-        model_a = pm.Deterministic(name="model_a", var=2.0 + model_a_star)
-        
+        model_a = pm.Deterministic(name="model_a", var=1.5 + model_a_star)
+
         model_b_star = pm.Normal(name="model_b_star", mu=0.0, sd=1.0)
-        model_b = pm.Deterministic(name="model_b", var=-10.0 + 5.0 * model_b_star)
-        
-        # model_c_star = pm.Normal(name="model_c_star", mu=0.0, sd=1.0)
-        # model_c = pm.Deterministic(name="model_c", var=0.0 + 0.5 * model_c_star)
+        model_b = pm.Deterministic(name="model_b", var=-11.0 + 5.0 * model_b_star)
+
+        model_c_star = pm.Normal(name="model_c_star", mu=0.0, sd=1.0)
+        model_c = pm.Deterministic(name="model_c", var=0.1 + 0.1 * model_c_star)
+
+        model_I_star = pm.Normal(name="model_I_star", mu=0.0, sd=1.0)
+        model_I = pm.Deterministic(name="model_I", var=0.1 + 0.1 * model_I_star)
+
+        # model_d_star = pm.Normal(name="model_d_star", mu=0.0, sd=1.0)
+        # model_d = pm.Deterministic(name="model_d", var=0.02 + 0.01 * model_d_star)
+
+        # model_tau_star = pm.Normal(name="model_tau_star", mu=0.0, sd=1.0)
+        # model_tau = pm.Deterministic(name="model_tau", var=1.0 + 0.5 * model_tau_star)
 
         x_init = theano.shared(X[0], name="x_init")
 
@@ -67,9 +75,9 @@ if __name__ == "__main__":
         priors = {
             "model_a": model_a,
             "model_b": model_b,
-            "model_c": np.array([simulation_params["c_sim"]]),
-            "model_d": np.array([simulation_params["d_sim"]]),
-            "model_I": np.array([simulation_params["I_sim"]]),
+            "model_c": model_c,
+            "model_d": np.array([0.02]),
+            "model_I": model_I,
             "model_tau": np.array([1.0]),
             "model_e": np.array([3.0]),
             "model_f": np.array([1.0]),
@@ -85,8 +93,12 @@ if __name__ == "__main__":
         }
 
         pymc_model.prior_stats = {
-            "model_a": {"mean": 2.0, "sd": 1.0},
-            "model_b": {"mean": -10.0, "sd": 5.0},
+            "model_a": {"mean": 1.5, "sd": 1.0},
+            "model_b": {"mean": -11.0, "sd": 5.0},
+            "model_c": {"mean": 0.1, "sd": 0.1},
+            # "model_d": {"mean": 0.02, "sd": 0.01},
+            "model_I": {"mean": 0.1, "sd": 0.1},
+            # "model_tau": {"mean": 1.0, "sd": 0.5},
             "noise_gfun": {"mean": 0.05, "sd": 0.1},
             "global_noise": {"mean": 0.0, "sd": 1.0}
         }
@@ -96,13 +108,13 @@ if __name__ == "__main__":
         obs=X,
         time_step=simulation_params["dt"]
     )
-    
+
     inference_data = pymc_model.run_inference(
         draws=draws,
         tune=tune,
         cores=num_cores,
         target_accept=0.9,
-        max_treedepth=15,
+        max_treedepth=35,
         step_scale=0.25,
         save=True
     )

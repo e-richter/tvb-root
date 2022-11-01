@@ -42,7 +42,8 @@ class pymcModel1node:
         with self.stat_model:
             self.dt = theano.shared(time_step, name="dt")
 
-            x_sim, updates = theano.scan(fn=self.scheme, sequences=[self.priors["dynamic_noise"]], outputs_info=[self.priors["x_init"]], n_steps=self.shape[0])
+            x_sim, updates = theano.scan(fn=self.scheme, sequences=[self.priors["dynamic_noise"]],
+                                         outputs_info=[self.priors["x_init"]], n_steps=self.shape[0])
 
             amplitude_star = pm.Normal(name="amplitude_star", mu=0.0, sd=1.0)
             amplitude = pm.Deterministic(name="amplitude", var=0.0 + amplitude_star)
@@ -52,21 +53,26 @@ class pymcModel1node:
 
             x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_sim + offset)
 
-            x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=self.priors["global_noise"], shape=self.shape, observed=self.obs)
+            x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=self.priors["global_noise"], shape=self.shape,
+                              observed=self.obs)
 
     def scheme(self, x_eta, x_prev):
-        x_next = x_prev + self.dt * self.tvb_model.dfun_tensor(x_prev, self.priors, self.priors["node_coupling"]) + x_eta  # * self.noise * tt.sqrt(self.dt)
+        x_next = x_prev + self.dt * self.tvb_model.dfun_tensor(x_prev, self.priors, self.priors[
+            "node_coupling"]) + x_eta  # * self.noise * tt.sqrt(self.dt)
         return x_next
 
-    def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, max_treedepth: int, step_scale: float, save: bool = False):
+    def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, max_treedepth: int,
+                      step_scale: float, save: bool = False):
         with self.stat_model:
-            self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept, max_treedepth=max_treedepth, step_scale=step_scale)
+            self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept,
+                                   max_treedepth=max_treedepth, step_scale=step_scale)
             posterior_predictive = pm.sample_posterior_predictive(trace=self.trace)
             self.inference_data = az.from_pymc3(trace=self.trace, posterior_predictive=posterior_predictive)
             self.summary = az.summary(self.inference_data)
 
             if save:
-                self.inference_data.to_netcdf(filename=f"pymc_data/inference_data/{self.run_id}_inference_data.nc", compress=False)
+                self.inference_data.to_netcdf(filename=f"pymc_data/inference_data/{self.run_id}_inference_data.nc",
+                                              compress=False)
 
         return self.inference_data
 
@@ -79,7 +85,8 @@ class pymcModel1node:
     def posterior_zscore(self, init_params: Dict[str, float]):
         z = np.empty(len(init_params))
         for i, (key, value) in enumerate(init_params.items()):
-            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            posterior_ = self.inference_data.posterior[key].values.reshape(
+                (self.inference_data.posterior[key].values.size,))
             z_ = np.abs(value - posterior_.mean()) / posterior_.std()
             z[i] = z_
         return z
@@ -87,8 +94,9 @@ class pymcModel1node:
     def posterior_shrinkage(self):
         s = np.empty(len(self.prior_stats))
         for i, (key, value) in enumerate(self.prior_stats.items()):
-            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
-            s_ = 1 - (posterior_.std()**2 / value["sd"]**2)
+            posterior_ = self.inference_data.posterior[key].values.reshape(
+                (self.inference_data.posterior[key].values.size,))
+            s_ = 1 - (posterior_.std() ** 2 / value["sd"] ** 2)
             s[i] = s_
         return s
 
@@ -98,25 +106,45 @@ class pymcModel1node:
         ncols = int(np.ceil(num_params / nrows))
 
         fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(20, 16))
+        for ax in axes.reshape(-1):
+            ax.set_axis_off()
         for i, (key, value) in enumerate(init_params.items()):
             if isinstance(value, np.ndarray):
                 continue
 
-            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            posterior_ = self.inference_data.posterior[key].values.reshape(
+                (self.inference_data.posterior[key].values.size,))
             ax = axes.reshape(-1)[i]
-            ax.hist(posterior_, bins=100)
+            ax.set_axis_on()
+            ax.hist(posterior_, bins=100, alpha=0.5)
             ax.axvline(init_params[key], color="r", label="simulation parameter")
             ax.axvline(self.prior_stats[key]["mean"], color="r", linestyle="-.", label="prior mean")
-            ax.set_xlim(
-                xmin=self.prior_stats[key]["mean"] - 2 * self.prior_stats[key]["sd"],
-                xmax=self.prior_stats[key]["mean"] + 2 * self.prior_stats[key]["sd"]
-            )
-            ax.set_title(key, fontsize=18)
+            ax.axvline(posterior_.mean(), color="k", label="posterior mean")
+
+            if key in ["model_c", "model_I"]:
+                ax.set_xlim(
+                    xmin=self.prior_stats[key]["mean"] - 3 * self.prior_stats[key]["sd"],
+                    xmax=self.prior_stats[key]["mean"] + 3 * self.prior_stats[key]["sd"]
+                )
+            elif not any(s in key for s in ["noise", "epsilon"]):
+                ax.set_xlim(
+                    xmin=self.prior_stats[key]["mean"] - 2 * self.prior_stats[key]["sd"],
+                    xmax=self.prior_stats[key]["mean"] + 2 * self.prior_stats[key]["sd"]
+                )
+
+            if key == "noise":
+                ax.set_title("noise_gfun", fontsize=18)
+            elif key == "epsilon":
+                ax.set_title("global_noise", fontsize=18)
+            elif key == "a":
+                ax.set_title("model_a", fontsize=18)
+            else:
+                ax.set_title(key, fontsize=18)
             ax.tick_params(axis="both", labelsize=16)
         try:
-            axes[0, 0].legend(fontsize=18)
+            axes[0, 0].legend(fontsize=16)
         except IndexError:
-            axes[0].legend(fontsize=18)
+            axes[0].legend(fontsize=16)
 
         if save:
             plt.savefig(f"pymc_data/figures/{self.run_id}_posterior_samples.png", dpi=600, bbox_inches=None)
@@ -210,9 +238,11 @@ class pymcModel:
                 offset_star = pm.Normal(name="offset_star", mu=0.0, sd=1.0)
                 offset = pm.Deterministic(name="offset", var=0.0 + offset_star)
 
-                x_hat = pm.Deterministic(name="x_hat", var=amplitude * x_sim[:, self.tvb_simulator.model.cvar, :, :] + offset)
+                x_hat = pm.Deterministic(name="x_hat",
+                                         var=amplitude * x_sim[:, self.tvb_simulator.model.cvar, :, :] + offset)
 
-                x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=self.priors["global_noise"], shape=self.shape, observed=self.obs)
+                x_obs = pm.Normal(name="x_obs", mu=x_hat, sd=self.priors["global_noise"], shape=self.shape,
+                                  observed=self.obs)
 
     def scheme(self, x_eta, *args):
         Nr = self.tvb_simulator.connectivity.number_of_regions
@@ -226,7 +256,8 @@ class pymcModel:
         x_j = tt.stack(args, axis=0)
         x_j = x_j[:, self.tvb_simulator.model.cvar, :, :]
         x_j = x_j[-1 * self.tvb_simulator.history.nnz_idelays - 1]
-        x_j = x_j[np.arange(self.tvb_simulator.history.n_nnzw), :, self.tvb_simulator.history.nnz_col_el_idx, :].reshape([Ncv, self.tvb_simulator.history.n_nnzw, 1])
+        x_j = x_j[np.arange(self.tvb_simulator.history.n_nnzw), :, self.tvb_simulator.history.nnz_col_el_idx, :].reshape(
+            [Ncv, self.tvb_simulator.history.n_nnzw, 1])
 
         pre = self.tvb_simulator.coupling.pre(x_i, x_j)
 
@@ -241,7 +272,8 @@ class pymcModel:
 
         m_dx_tn = self.tvb_simulator.model.dfun_tensor(x_prev, self.priors, node_coupling)
         inter = x_prev + self.dt * m_dx_tn + x_eta
-        x_next = x_prev + (m_dx_tn + self.tvb_simulator.model.dfun_tensor(inter, self.priors, node_coupling)) * self.dt / 2.0 + x_eta
+        x_next = x_prev + (m_dx_tn + self.tvb_simulator.model.dfun_tensor(inter, self.priors,
+                                                                          node_coupling)) * self.dt / 2.0 + x_eta
         return x_next
 
     def compute_node_coupling(self, it, nc, X_init, x_init, history_init):
@@ -264,22 +296,26 @@ class pymcModel:
             (Nr, Ncv, Nr, 1))
         X_current = X_init[it, cvars, :, :]
 
-        nc = tt.set_subtensor(nc[it, :, :, :], (self.tvb_simulator.history.nnz_weights[np.newaxis, :].T * self.tvb_simulator.coupling.pre(
+        nc = tt.set_subtensor(nc[it, :, :, :], (
+                self.tvb_simulator.history.nnz_weights[np.newaxis, :].T * self.tvb_simulator.coupling.pre(
             X_current, X_delayed)).sum(axis=2).reshape([Ncv, Nr, 1]))
 
         nc = tt.set_subtensor(nc[it, :, :, :], self.tvb_simulator.coupling.post(nc[it, :, :, :]))
 
         return nc
 
-    def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, max_treedepth: int, step_scale: float, save: bool = False):
+    def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, max_treedepth: int,
+                      step_scale: float, save: bool = False):
         with self.stat_model:
-            self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept, max_treedepth=max_treedepth, step_scale=step_scale)
+            self.trace = pm.sample(draws=draws, tune=tune, cores=cores, target_accept=target_accept,
+                                   max_treedepth=max_treedepth, step_scale=step_scale)
             posterior_predictive = pm.sample_posterior_predictive(trace=self.trace)
             self.inference_data = az.from_pymc3(trace=self.trace, posterior_predictive=posterior_predictive)
             self.summary = az.summary(self.inference_data)
 
             if save:
-                self.inference_data.to_netcdf(filename=f"pymc_data/inference_data/{self.run_id}_inference_data.nc", compress=False)
+                self.inference_data.to_netcdf(filename=f"pymc_data/inference_data/{self.run_id}_inference_data.nc",
+                                              compress=False)
 
         return self.inference_data
 
@@ -292,7 +328,8 @@ class pymcModel:
     def posterior_zscore(self, init_params: Dict[str, float]):
         z = np.empty(len(init_params))
         for i, (key, value) in enumerate(init_params.items()):
-            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            posterior_ = self.inference_data.posterior[key].values.reshape(
+                (self.inference_data.posterior[key].values.size,))
             z_ = np.abs(value - posterior_.mean()) / posterior_.std()
             z[i] = z_
         return z
@@ -300,8 +337,9 @@ class pymcModel:
     def posterior_shrinkage(self):
         s = np.empty(len(self.prior_stats))
         for i, (key, value) in enumerate(self.prior_stats.items()):
-            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
-            s_ = 1 - (posterior_.std()**2 / value["sd"]**2)
+            posterior_ = self.inference_data.posterior[key].values.reshape(
+                (self.inference_data.posterior[key].values.size,))
+            s_ = 1 - (posterior_.std() ** 2 / value["sd"] ** 2)
             s[i] = s_
         return s
 
@@ -315,15 +353,29 @@ class pymcModel:
             if isinstance(value, np.ndarray):
                 continue
 
-            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            posterior_ = self.inference_data.posterior[key].values.reshape(
+                (self.inference_data.posterior[key].values.size,))
             ax = axes.reshape(-1)[i]
-            ax.hist(posterior_, bins=100)
+            ax.hist(posterior_, bins=100, alpha=0.5)
             ax.axvline(init_params[key], color="r", label="simulation parameter")
             ax.axvline(self.prior_stats[key]["mean"], color="r", linestyle="-.", label="prior mean")
-            ax.set_xlim(
-                xmin=self.prior_stats[key]["mean"] - 2 * self.prior_stats[key]["sd"],
-                xmax=self.prior_stats[key]["mean"] + 2 * self.prior_stats[key]["sd"]
-            )
+            ax.axvline(posterior_.mean(), color="k", label="posterior mean")
+
+            if key == "model_a":
+                ax.set_xlim(
+                    xmin=posterior_.mean() - 2 * self.prior_stats[key]["sd"],
+                    xmax=posterior_.mean() + 2 * self.prior_stats[key]["sd"]
+                )
+            elif not "noise" in key:
+                ax.set_xlim(
+                    xmin=posterior_.mean() - 2 * self.prior_stats[key]["sd"],
+                    xmax=posterior_.mean() + 2 * self.prior_stats[key]["sd"]
+                )
+            # else:
+            #     ax.set_xlim(
+            #         xmin=self.prior_stats[key]["mean"] - 2 * self.prior_stats[key]["sd"],
+            #         xmax=self.prior_stats[key]["mean"] + 2 * self.prior_stats[key]["sd"]
+            #     )
             ax.set_title(key, fontsize=18)
             ax.tick_params(axis="both", labelsize=16)
         try:
@@ -440,7 +492,8 @@ class CenteredModel:
             if isinstance(value, np.ndarray):
                 continue
 
-            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            posterior_ = self.inference_data.posterior[key].values.reshape(
+                (self.inference_data.posterior[key].values.size,))
             ax = axes.reshape(-1)[i]
             ax.hist(posterior_, bins=100)
             ax.axvline(init_params[key], color="r")

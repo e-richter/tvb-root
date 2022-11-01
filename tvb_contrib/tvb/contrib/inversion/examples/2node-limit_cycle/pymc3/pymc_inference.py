@@ -60,9 +60,9 @@ X = simulation_params["simulation"]
 
 # global inference parameters
 shape = X.shape
-draws = 500
-tune = 500
-num_cores = 2
+draws = 350
+tune = 350
+num_cores = 4
 
 Nt = int(sim.simulation_length)
 Nsv = len(sim.model.state_variables)
@@ -73,15 +73,18 @@ if __name__ == "__main__":
     pymc_model = pymcModel(sim)
 
     with pymc_model.stat_model:
-        # model_a_star = pm.Normal(name="model_a_star", mu=0.0, sd=1.0)
-        # model_a = pm.Deterministic(name="model_a", var=2.0 + model_a_star)
+        model_a_star = pm.Normal(name="model_a_star", mu=0.0, sd=1.0)
+        model_a = pm.Deterministic(name="model_a", var=2.0 + model_a_star)
+        
+        #model_b_star = pm.Normal(name="model_b_star", mu=0.0, sd=1.0)
+        #model_b = pm.Deterministic(name="model_b", var=-10.0 + 5.0 * model_b_star)
 
         coupling_a_star = pm.Normal(name="coupling_a_star", mu=0.0, sd=1.0)
-        coupling_a = pm.Deterministic(name="coupling_a", var=0.1 + 0.05 * coupling_a_star)
+        coupling_a = pm.Deterministic(name="coupling_a", var=0.1 + 0.1 * coupling_a_star)
 
         BoundedNormal = pm.Bound(pm.Normal, lower=0.0)
 
-        noise_gfun_star = BoundedNormal(name="noise_gfun_star", mu=0.0, sd=1.0)
+        noise_gfun_star = pm.Normal(name="noise_gfun_star", mu=0.0, sd=1.0)
         noise_gfun = pm.Deterministic(name="noise_gfun", var=0.05 + 0.1 * noise_gfun_star)
 
         noise_star = pm.Normal(name="noise_star", mu=0.0, sd=1.0, shape=(Nt, Nsv, Nr, 1))
@@ -91,7 +94,7 @@ if __name__ == "__main__":
 
         # Passing the prior distributions as dictionary. Also including fixed model parameters.
         priors = {
-            "model_a": np.array([simulation_params["a_sim"]]),
+            "model_a": model_a,
             "model_b": np.array([simulation_params["b_sim"]]),
             "model_c": np.array([simulation_params["c_sim"]]),
             "model_d": np.array([simulation_params["d_sim"]]),
@@ -110,9 +113,11 @@ if __name__ == "__main__":
         }
 
         pymc_model.prior_stats = {
-            "coupling_a": {"mean": 0.1, "sd": 0.05},
+            "model_a": {"mean": 2.0, "sd": 1.0},
+            #"model_b": {"mean": -10.0, "sd": 5.0},
+            "coupling_a": {"mean": 0.1, "sd": 0.1},
             "noise_gfun": {"mean": 0.05, "sd": 0.1},
-            "global_epsilon": {"mean": 0.0, "sd": 1.0}
+            "global_noise": {"mean": 0.0, "sd": 1.0}
         }
 
     pymc_model.set_model(
@@ -126,8 +131,8 @@ if __name__ == "__main__":
         tune=tune,
         cores=num_cores,
         target_accept=0.9,
-        max_treedepth=20,
-        step_scale=0.5,
+        max_treedepth=35,
+        step_scale=0.25,
         save=True
     )
 
