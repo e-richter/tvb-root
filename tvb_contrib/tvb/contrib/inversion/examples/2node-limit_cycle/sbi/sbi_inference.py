@@ -99,11 +99,11 @@ def job(i):
         # prior_vars=prior_vars,
         # prior_dist="Normal",
         num_simulations=75000,
-        num_workers=8,
+        num_workers=10,
         num_samples=2000
     )
 
-    _ = snpe_model.to_arviz_data(num_workers=8)
+    _ = snpe_model.to_arviz_data(num_workers=10)
 
     snpe_model.save(simulation_params=simulation_params.copy())
 

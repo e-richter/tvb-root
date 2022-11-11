@@ -48,7 +48,7 @@ class sbiModel:
             self.simulation_wrapper = self.simulation_wrapper_1node
         else:
             self.simulation_wrapper = self.simulation_wrapper_nnodes
-
+        
         self.method = method
         self.obs = obs
         self.shape = self.obs.shape
@@ -441,7 +441,11 @@ def infer_main(
         num_workers=num_workers,
     )
     
-    density_estimator = inference.append_simulations(theta, x).train()
+    density_estimator = inference.append_simulations(theta, x).train(
+        learning_rate=10e-4,
+        training_batch_size=1000,
+        stop_after_epochs=100
+    )
     if method == "SNPE":
         posterior = inference.build_posterior()
     else:

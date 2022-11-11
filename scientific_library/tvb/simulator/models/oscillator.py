@@ -389,7 +389,7 @@ class Generic2dOscillator(ModelNumbaDfun):
 
     @staticmethod
     def dfun_tensor(state, params, node_coupling):
-        lc_0 = params["local_coupling"] * state[0, :, 0]
+        # lc_0 = params["local_coupling"] * state[0, :, 0]
         vw_ = state
         c_ = node_coupling
 
