@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 
 import numpy as np
-from copy import deepcopy
+from copy import deepcopy, copy
 from joblib import Parallel, delayed
 import pickle
 
@@ -14,6 +14,7 @@ import tvb.simulator.integrators
 import tvb.simulator.coupling
 import tvb.simulator.monitors
 
+
 with open('../limit-cycle_simulation.pkl', 'rb') as f:
     simulation_params = pickle.load(f)
 
@@ -25,7 +26,7 @@ connectivity.weights = np.array([[0., 2.], [2., 0.]])
 connectivity.region_labels = np.array(["R1", "R2"])
 connectivity.centres = np.array([[0.1, 0.1, 0.1], [0.2, 0.1, 0.1]])
 connectivity.tract_lengths = np.array([[0., 2.5], [2.5, 0.]])
-connectivity.configure()
+# connectivity.configure()
 
 # Model
 oscillator_model = getattr(tvb.simulator.models, simulation_params["model"])(
@@ -34,13 +35,13 @@ oscillator_model = getattr(tvb.simulator.models, simulation_params["model"])(
     c=np.asarray([simulation_params["c_sim"]]),
     d=np.asarray([simulation_params["d_sim"]]),
     I=np.asarray([simulation_params["I_sim"]]),
-)
-oscillator_model.configure()
+    )
+# oscillator_model.configure()
 
 # Integrator
 integrator = getattr(tvb.simulator.integrators, simulation_params["integrator"])(dt=simulation_params["dt"])
 integrator.noise.nsig = np.array([simulation_params["nsig"]])
-integrator.configure()
+# integrator.configure()
 
 # Global coupling
 coupling = getattr(tvb.simulator.coupling, simulation_params["coupling"])()
@@ -58,33 +59,14 @@ sim = Simulator(
     simulation_length=simulation_params["simulation_length"]
 )
 
-sim.configure()
-
-prior = sbiPrior(
-    ["a", "a", "nsig", "noise"],
-    ["model", "coupling", "integrator.noise", "global"],
-    ["Normal", "Normal", "LogNormal", "HalfNormal"],
-    [2.0, 0.1, 0.003, 0.0],
-    [1.0, 0.1, 0.001, 0.1]
-)
-
-# prior_vars = {
-#     "model": {
-#         "a": [2.0, 1.0],
-#         "b": [-10.0, 5.0],
-#         "c": [0.0, 0.5],
-#         "I": [0.0, 0.5]
-#     },
-#     "coupling": {
-#         "a": [0.1, 0.5]
-#     },
-#     "integrator.noise": {
-#         "nsig": [0.003, 0.002]
-#     },
-#     "global": {
-#         "epsilon": [0.0, 0.5]
-#     },
-# }
+prior = sbiPrior()
+prior.append("a", "model", "Normal", 2.0, 1.0)
+# prior.append("b", "model", "Normal", -10.0, 5.0)
+# prior.append("c", "model", "Normal", 0.0, 0.1)
+# prior.append("I", "model", "Normal", 0.0, 0.1)
+prior.append("a", "coupling", "Normal", 0.1, 0.1)
+prior.append("nsig", "integrator.noise", "LogNormal", 0.003, 0.001)
+prior.append("noise", "global", "HalfNormal", 0.0, 0.1)
 
 
 def job(i):
@@ -96,8 +78,6 @@ def job(i):
 
     snpe_model.run_inference(
         prior=prior,
-        # prior_vars=prior_vars,
-        # prior_dist="Normal",
         num_simulations=75000,
         num_workers=10,
         num_samples=2000

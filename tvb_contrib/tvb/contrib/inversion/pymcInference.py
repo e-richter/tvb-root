@@ -197,13 +197,13 @@ class pymcModel:
             Nr = self.tvb_simulator.connectivity.number_of_regions
             idmax = self.tvb_simulator.connectivity.idelays.max()
 
-            x0_init = np.zeros((Nsv, Nr, 1))
-            for i, (_, value) in enumerate(self.tvb_simulator.model.state_variable_range.items()):
-                loc = (value[0] + value[1]) / 2
-                scale = (value[1] - value[0]) / 2
-                x0_init[i, :, :] = np.random.normal(loc=loc, scale=scale, size=(1, Nr, 1))
-            x0_init = tt.as_tensor_variable(x0_init, name="x0_init")
-            # x0_init = pm.Normal(name="x0_init", mu=0.0, sd=1.0, shape=(Nsv, Nr, 1))
+            # x0_init = np.zeros((Nsv, Nr, 1))
+            # for i, (_, value) in enumerate(self.tvb_simulator.model.state_variable_range.items()):
+            #     loc = (value[0] + value[1]) / 2
+            #     scale = (value[1] - value[0]) / 2
+            #     x0_init[i, :, :] = np.random.normal(loc=loc, scale=scale, size=(1, Nr, 1))
+            # x0_init = tt.as_tensor_variable(x0_init, name="x0_init")
+            x0_init = pm.Normal(name="x0_init", mu=0.0, sd=1.0, shape=(Nsv, Nr, 1))
 
             x_init = np.zeros((idmax + 1, Nsv, Nr, 1))
             x_init = tt.as_tensor_variable(x_init, name="x_init")
