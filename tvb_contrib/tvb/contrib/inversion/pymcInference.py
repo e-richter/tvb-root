@@ -197,33 +197,19 @@ class pymcModel:
             Nr = self.tvb_simulator.connectivity.number_of_regions
             idmax = self.tvb_simulator.connectivity.idelays.max()
 
-            # x0_init = pm.Normal(name="x0_init", mu=0.0, sd=1.0, shape=(Nsv, Nr, 1))
-            x0_init = np.zeros((Nsv, Nr, 1))
-            for i, (_, value) in enumerate(self.tvb_simulator.model.state_variable_range.items()):
-                loc = (value[0] + value[1]) / 2
-                scale = (value[1] - value[0]) / 2
-                x0_init[i, :, :] = np.random.normal(loc=loc, scale=scale, size=(1, Nr, 1))
+            # x0_init = np.zeros((Nsv, Nr, 1))
+            # for i, (_, value) in enumerate(self.tvb_simulator.model.state_variable_range.items()):
+            #     loc = (value[0] + value[1]) / 2
+            #     scale = (value[1] - value[0]) / 2
+            #     x0_init[i, :, :] = np.random.normal(loc=loc, scale=scale, size=(1, Nr, 1))
+            # x0_init = tt.as_tensor_variable(x0_init, name="x0_init")
+            x0_init = pm.Normal(name="x0_init", mu=0.0, sd=1.0, shape=(Nsv, Nr, 1))
 
             x_init = np.zeros((idmax + 1, Nsv, Nr, 1))
-            x_init = theano.shared(x_init, name="x_init")
+            x_init = tt.as_tensor_variable(x_init, name="x_init")
             x_init = tt.set_subtensor(x_init[-1], x0_init)
 
-            # history_init = pm.Normal(name="history_init", mu=0.0, sd=5.0, shape=(idmax, Nsv, Nr, 1))
-            # nc_init = np.zeros([Nt, Nc, Nr, 1])
-            # nc_init = theano.shared(nc_init, name="nc_init")
-            #
-            # X_init = np.empty([Nt, Nsv, Nr, 1])
-            # X_init = theano.shared(X_init, name="X_init")
-            # nc, _ = theano.scan(
-            #     fn=self.compute_node_coupling,
-            #     sequences=[tt.as_tensor_variable(np.arange(Nt))],
-            #     non_sequences=[X_init, x_init, history_init],
-            #     outputs_info=[nc_init],
-            #     n_steps=self.shape[0]
-            # )
-            # self.priors["node_coupling"] = nc
-
-            taps = list(-1 * np.arange(np.unique(self.tvb_simulator.history.nnz_idelays).max() + 1) - 1)
+            taps = list(-1 * np.arange(np.unique(self.tvb_simulator.history.nnz_idelays).max() + 1) - 1)[::-1]
             x_sim, updates = theano.scan(
                 fn=self.scheme,
                 sequences=[self.priors["dynamic_noise"]],
@@ -245,64 +231,38 @@ class pymcModel:
                                   observed=self.obs)
 
     def scheme(self, x_eta, *args):
-        Nr = self.tvb_simulator.connectivity.number_of_regions
-        Ncv = self.tvb_simulator.history.n_cvar
+        n_node = self.tvb_simulator.connectivity.number_of_regions
 
         x_prev = args[-1]
 
         x_i = x_prev[self.tvb_simulator.model.cvar, :, :]
-        x_i = x_i[:, self.tvb_simulator.history.nnz_row_el_idx]
+        x_i = tt.transpose(tt.reshape(tt.tile(x_i, (1, n_node)), (n_node, n_node)))
+        # x_i = x_i[:, self.tvb_simulator.history.nnz_row_el_idx]
 
         x_j = tt.stack(args, axis=0)
         x_j = x_j[:, self.tvb_simulator.model.cvar, :, :]
-        x_j = x_j[-1 * self.tvb_simulator.history.nnz_idelays - 1]
-        x_j = x_j[np.arange(self.tvb_simulator.history.n_nnzw), :, self.tvb_simulator.history.nnz_col_el_idx, :].reshape(
-            [Ncv, self.tvb_simulator.history.n_nnzw, 1])
+        x_j = tt.flatten(x_j)[-1 * self.tvb_simulator.connectivity.idelays - 1]
+        # x_j = x_j[-1 * self.tvb_simulator.history.nnz_idelays - 1]
+        # x_j = x_j[np.arange(self.tvb_simulator.history.n_nnzw), :, self.tvb_simulator.history.nnz_col_el_idx, :].reshape(
+        #     [Ncv, self.tvb_simulator.history.n_nnzw, 1])
 
         pre = self.tvb_simulator.coupling.pre(x_i, x_j)
+        gx = tt.sum(self.tvb_simulator.connectivity.weights * pre, axis=-1)
+        nc = self.tvb_simulator.coupling.post_tensor(gx, self.priors)
 
-        weights_col = self.tvb_simulator.history.nnz_weights.reshape((self.tvb_simulator.history.n_nnzw, 1))
-        sum_ = np.zeros((Ncv, Nr, 1))
-        lri, nzr = self.tvb_simulator.coupling._lri(self.tvb_simulator.history.nnz_row_el_idx)
-        try:
-            sum_[:, nzr] = np.add.reduceat(weights_col * pre, lri, axis=1)
-            node_coupling = self.tvb_simulator.coupling.post_tensor(sum_, self.priors)
-        except:
-            node_coupling = self.tvb_simulator.coupling.post_tensor(sum_, self.priors)
+        # weights_col = self.tvb_simulator.history.nnz_weights.reshape((self.tvb_simulator.history.n_nnzw, 1))
+        # sum_ = np.zeros((Ncv, Nr, 1))
+        # lri, nzr = self.tvb_simulator.coupling._lri(self.tvb_simulator.history.nnz_row_el_idx)
+        # try:
+        #     sum_[:, nzr] = np.add.reduceat(weights_col * pre, lri, axis=1)
+        #     node_coupling = self.tvb_simulator.coupling.post_tensor(sum_, self.priors)
+        # except:
+        #     node_coupling = self.tvb_simulator.coupling.post_tensor(sum_, self.priors)
 
-        m_dx_tn = self.tvb_simulator.model.dfun_tensor(x_prev, self.priors, node_coupling)
+        m_dx_tn = self.tvb_simulator.model.dfun_tensor(x_prev, self.priors, nc)
         inter = x_prev + self.dt * m_dx_tn + x_eta
-        x_next = x_prev + (m_dx_tn + self.tvb_simulator.model.dfun_tensor(inter, self.priors,
-                                                                          node_coupling)) * self.dt / 2.0 + x_eta
+        x_next = x_prev + (m_dx_tn + self.tvb_simulator.model.dfun_tensor(inter, self.priors, nc)) * self.dt / 2.0 + x_eta
         return x_next
-
-    def compute_node_coupling(self, it, nc, X_init, x_init, history_init):
-
-        Nt = int(self.tvb_simulator.simulation_length)
-        Nsv = len(self.tvb_simulator.model.state_variables)
-        Nr = self.tvb_simulator.connectivity.number_of_regions
-        Ncv = self.tvb_simulator.history.n_cvar
-        Nc = 1
-        idmax = self.tvb_simulator.connectivity.idelays.max()
-        cvars = self.tvb_simulator.history.cvars
-
-        delayed_indices = (it - self.tvb_simulator.connectivity.idelays).flatten()
-
-        X_init_bundle = copy(X_init)
-        X_init_bundle = tt.set_subtensor(X_init_bundle[0], x_init)
-        X_init_bundle = tt.set_subtensor(X_init_bundle[-idmax:], history_init)
-
-        X_delayed = X_init_bundle[delayed_indices, cvars, np.repeat(np.arange(Nr), Nr), :].reshape(
-            (Nr, Ncv, Nr, 1))
-        X_current = X_init[it, cvars, :, :]
-
-        nc = tt.set_subtensor(nc[it, :, :, :], (
-                self.tvb_simulator.history.nnz_weights[np.newaxis, :].T * self.tvb_simulator.coupling.pre(
-            X_current, X_delayed)).sum(axis=2).reshape([Ncv, Nr, 1]))
-
-        nc = tt.set_subtensor(nc[it, :, :, :], self.tvb_simulator.coupling.post(nc[it, :, :, :]))
-
-        return nc
 
     def run_inference(self, draws: int, tune: int, cores: int, target_accept: float, max_treedepth: int,
                       step_scale: float, save: bool = False):

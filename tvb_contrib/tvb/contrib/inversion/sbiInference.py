@@ -11,7 +11,7 @@ from tqdm import tqdm
 from datetime import datetime
 from pathlib import Path
 import pickle
-from copy import deepcopy
+from copy import deepcopy, copy
 from joblib import Parallel, delayed
 import itertools
 import operator
@@ -48,7 +48,7 @@ class sbiModel:
             self.simulation_wrapper = self.simulation_wrapper_1node
         else:
             self.simulation_wrapper = self.simulation_wrapper_nnodes
-
+        
         self.method = method
         self.obs = obs
         self.shape = self.obs.shape
@@ -59,7 +59,7 @@ class sbiModel:
         self.posterior_samples = None
         self.num_simulations = None
         self.simulations = None
-        self.simulation_params = None
+        self.inference_params = None
         self.density_estimator = None
         self.map_estimator = None
         self.inference_data = None
@@ -73,7 +73,19 @@ class sbiModel:
                 continue
             operator.attrgetter(target)(sim_).__dict__[key] = np.array([float(params[i])])
 
+        t = 1000 * time.time()
+        np.random.seed(int(t) % 2**32)
         sim_.configure()
+        sim_._configure_history()
+
+        x0 = np.zeros((2, 2, 1))
+        for i, (_, value) in enumerate(sim_.model.state_variable_range.items()):
+            low = value[0]
+            high = value[1]
+            x0[i, :, :] = np.random.uniform(low=low, high=high, size=(1, 2, 1))
+        sim_.current_state = x0
+
+        # print(sim_.current_state)
 
         # amplitude = params[[i for (i, key, _) in self.prior_keys if key == "amplitude"][0]]
         # offset = params[[i for (i, key, _) in self.prior_keys if key == "offset"][0]]
@@ -159,7 +171,7 @@ class sbiModel:
         self.prior = prior
 
         self.num_simulations = num_simulations
-        self.posterior, self.density_estimator, self.simulation_params = infer_main(
+        self.posterior, self.density_estimator, self.inference_params = infer_main(
             simulator=self.simulation_wrapper,
             prior=self.prior.priors,
             method=self.method,
@@ -362,30 +374,38 @@ class sbiModel:
 class sbiPrior:
     def __init__(
             self,
-            parameter_name: list,
-            target_module: list,
-            prior_distribution: list,
-            location: list,
-            scale: list
+            # parameter_name: list,
+            # target_module: list,
+            # prior_distribution: list,
+            # location: list,
+            # scale: list
     ):
 
-        if not len(parameter_name) == len(target_module) == len(prior_distribution) == len(location) == len(scale):
-            raise Exception("Arguments are not of the same length.")
+        # if not len(parameter_name) == len(target_module) == len(prior_distribution) == len(location) == len(scale):
+        #     raise Exception("Arguments are not of the same length.")
 
-        self.parameter_name = parameter_name
-        self.target_module = target_module
-        self.prior_distribution = prior_distribution
-        self.location = location
-        self.scale = scale
+        self.parameter_name = []
+        self.target_module = []
+        self.prior_distribution = []
+        self.location = []
+        self.scale = []
 
         self.num_params = len(self.parameter_name)
         self.priors = None
         self.identifier = None
 
-        self.process_prior_information()
-        self.process_targets()
+    def append(self, parameter: str, module: str, distribution: str, loc: float, scale: float):
+        self.parameter_name.append(parameter)
+        self.target_module.append(module)
+        self.prior_distribution.append(distribution)
+        self.location.append(loc)
+        self.scale.append(scale)
 
-    def process_prior_information(self):
+        self.num_params = len(self.parameter_name)
+        self.process_distributions()
+        self.process_identifiers()
+
+    def process_distributions(self):
         priors = []
         for param, target, dist, loc, scale in zip(
                 self.parameter_name, self.target_module, self.prior_distribution, self.location, self.scale):
@@ -408,9 +428,14 @@ class sbiPrior:
                 raise NotImplementedError(
                     f"{dist} not supported yet. Please use on of the following 'Normal', 'LogNormal', 'Uniform', 'HalfNormal'.")
 
-        self.priors, _, _ = process_prior(priors)
+        if self.num_params == 0:
+            raise Exception("No prior provided.")
+        elif self.num_params == 1:
+            self.priors = priors[0]
+        else:
+            self.priors, _, _ = process_prior(priors)
 
-    def process_targets(self):
+    def process_identifiers(self):
         self.identifier = []
         for i, (param, target) in enumerate(zip(self.parameter_name, self.target_module)):
             self.identifier.append((i, param, target))
@@ -441,7 +466,11 @@ def infer_main(
         num_workers=num_workers,
     )
     
-    density_estimator = inference.append_simulations(theta, x).train()
+    density_estimator = inference.append_simulations(theta, x).train(
+        training_batch_size=200,
+        learning_rate=1e-4,
+        show_train_summary=True
+    )
     if method == "SNPE":
         posterior = inference.build_posterior()
     else:
