@@ -276,8 +276,8 @@ class sbiModel:
         return {"WAIC": waic.waic, "LOO": loo.loo}
 
     def plot_posterior_samples(self, init_params: Dict[str, float], bins: int = 100, save: bool = False):
-        if self.inference_data is None:
-            self.inference_data = self.to_arviz_data()
+        # if self.inference_data is None:
+        #     self.inference_data = self.to_arviz_data()
 
         num_params = len(init_params)
         ncols = int(np.ceil(np.sqrt(num_params)))
@@ -289,7 +289,8 @@ class sbiModel:
         for ax in axes.reshape(-1):
             ax.set_axis_off()
         for i, (key, value) in enumerate(init_params.items()):
-            posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
+            posterior_ = self.posterior_samples[:, i].numpy()
+            # posterior_ = self.inference_data.posterior[key].values.reshape((self.inference_data.posterior[key].values.size,))
             ax = axes.reshape(-1)[i]
             ax.set_axis_on()
             ax.hist(posterior_, bins=bins, alpha=0.5)
@@ -466,11 +467,7 @@ def infer_main(
         num_workers=num_workers,
     )
     
-    density_estimator = inference.append_simulations(theta, x).train(
-        training_batch_size=200,
-        learning_rate=1e-4,
-        show_train_summary=True
-    )
+    density_estimator = inference.append_simulations(theta, x).train()
     if method == "SNPE":
         posterior = inference.build_posterior()
     else:

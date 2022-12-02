@@ -185,6 +185,7 @@ class pymcModel:
             priors: Dict[str, Union[FreeRV, TransformedRV, DeterministicWrapper, np.ndarray, float]],
             obs: np.ndarray,
             time_step: float,
+            x0: np.ndarray,
             observation_model="Raw",
     ):
         self.priors = priors
@@ -203,7 +204,9 @@ class pymcModel:
             #     scale = (value[1] - value[0]) / 2
             #     x0_init[i, :, :] = np.random.normal(loc=loc, scale=scale, size=(1, Nr, 1))
             # x0_init = tt.as_tensor_variable(x0_init, name="x0_init")
-            x0_init = pm.Normal(name="x0_init", mu=0.0, sd=1.0, shape=(Nsv, Nr, 1))
+            # x0_init = pm.Normal(name="x0_init", mu=0.0, sd=1.0, shape=(Nsv, Nr, 1))
+            # x0_init = pm.Uniform(name="x0_init", lower=-4.0, upper=4.0, shape=(Nsv, Nr, 1))
+            x0_init = x0
 
             x_init = np.zeros((idmax + 1, Nsv, Nr, 1))
             x_init = tt.as_tensor_variable(x_init, name="x_init")

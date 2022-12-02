@@ -57,6 +57,7 @@ sim = Simulator(
 sim.configure()
 
 X = simulation_params["simulation"]
+x0 = simulation_params["x0"]
 
 # global inference parameters
 shape = X.shape
@@ -76,8 +77,8 @@ if __name__ == "__main__":
         model_a_star = pm.Normal(name="model_a_star", mu=0.0, sd=1.0)
         model_a = pm.Deterministic(name="model_a", var=2.0 + model_a_star)
         
-        # model_b_star = pm.Normal(name="model_b_star", mu=0.0, sd=1.0)
-        # model_b = pm.Deterministic(name="model_b", var=-10.0 + 5.0 * model_b_star)
+        model_b_star = pm.Normal(name="model_b_star", mu=0.0, sd=1.0)
+        model_b = pm.Deterministic(name="model_b", var=-10.0 + 5.0 * model_b_star)
 
         coupling_a_star = pm.Normal(name="coupling_a_star", mu=0.0, sd=1.0)
         coupling_a = pm.Deterministic(name="coupling_a", var=0.1 + 0.1 * coupling_a_star)
@@ -95,7 +96,7 @@ if __name__ == "__main__":
         # Passing the prior distributions as dictionary. Also including fixed model parameters.
         priors = {
             "model_a": model_a,
-            "model_b": np.array([simulation_params["b_sim"]]),
+            "model_b": model_b,
             "model_c": np.array([simulation_params["c_sim"]]),
             "model_d": np.array([simulation_params["d_sim"]]),
             "model_I": np.array([simulation_params["I_sim"]]),
@@ -114,7 +115,7 @@ if __name__ == "__main__":
 
         pymc_model.prior_stats = {
             "model_a": {"mean": 2.0, "sd": 1.0},
-            # "model_b": {"mean": -10.0, "sd": 5.0},
+            "model_b": {"mean": -10.0, "sd": 5.0},
             "coupling_a": {"mean": 0.1, "sd": 0.1},
             "noise_gfun": {"mean": 0.05, "sd": 0.1},
             "global_noise": {"mean": 0.0, "sd": 1.0}
@@ -124,6 +125,7 @@ if __name__ == "__main__":
         priors=priors,
         obs=X,
         time_step=simulation_params["dt"],
+        x0=x0
     )
 
     inference_data = pymc_model.run_inference(
@@ -131,7 +133,7 @@ if __name__ == "__main__":
         tune=tune,
         cores=num_cores,
         target_accept=0.9,
-        max_treedepth=35,
+        max_treedepth=30,
         step_scale=0.25,
         save=True
     )
