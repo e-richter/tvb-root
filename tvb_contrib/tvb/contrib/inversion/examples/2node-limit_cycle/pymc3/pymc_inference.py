@@ -57,12 +57,13 @@ sim = Simulator(
 sim.configure()
 
 X = simulation_params["simulation"]
+x0 = simulation_params["x0"]
 
 # global inference parameters
 shape = X.shape
-draws = 250
-tune = 250
-num_cores = 4
+draws = 300
+tune = 300
+num_cores = 5
 
 Nt = int(sim.simulation_length)
 Nsv = len(sim.model.state_variables)
@@ -124,6 +125,7 @@ if __name__ == "__main__":
         priors=priors,
         obs=X,
         time_step=simulation_params["dt"],
+        x0=x0
     )
 
     inference_data = pymc_model.run_inference(

@@ -60,13 +60,13 @@ sim = Simulator(
 )
 
 prior = sbiPrior()
-prior.append("a", "model", "Normal", 2.0, 1.0)
-# prior.append("b", "model", "Normal", -10.0, 5.0)
-# prior.append("c", "model", "Normal", 0.0, 0.1)
-# prior.append("I", "model", "Normal", 0.0, 0.1)
-prior.append("a", "coupling", "Normal", 0.1, 0.1)
+prior.append("a", "model", "Normal", 2.0, 0.5)
+prior.append("b", "model", "Normal", -10.0, 2.0)
+prior.append("c", "model", "Normal", 0.0, 0.1)
+prior.append("I", "model", "Normal", 0.0, 0.1)
+prior.append("a", "coupling", "Normal", 0.1, 0.05)
 prior.append("nsig", "integrator.noise", "LogNormal", 0.003, 0.001)
-prior.append("noise", "global", "HalfNormal", 0.0, 0.1)
+prior.append("noise", "global", "HalfNormal", 0.0, 0.05)
 
 
 def job(i):
@@ -78,16 +78,16 @@ def job(i):
 
     snpe_model.run_inference(
         prior=prior,
-        num_simulations=75000,
-        num_workers=10,
+        num_simulations=175000,
+        num_workers=64,
         num_samples=2000
     )
 
-    _ = snpe_model.to_arviz_data(num_workers=10)
+    # _ = snpe_model.to_arviz_data(num_workers=14)
 
     snpe_model.save(simulation_params=simulation_params.copy())
 
 
 if __name__ == "__main__":
-    num_inferences = 4
+    num_inferences = 1
     _ = Parallel(n_jobs=num_inferences)(delayed(job)(i) for i in range(num_inferences))

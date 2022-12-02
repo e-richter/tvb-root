@@ -78,16 +78,16 @@ def job(i):
 
     snpe_model.run_inference(
         prior=prior,
-        num_simulations=75000,
-        num_workers=10,
+        num_simulations=175000,
+        num_workers=64,
         num_samples=2000
     )
 
-    _ = snpe_model.to_arviz_data(num_workers=10)
+    # _ = snpe_model.to_arviz_data(num_workers=12)
 
     snpe_model.save(simulation_params=simulation_params.copy())
 
 
 if __name__ == "__main__":
-    num_inferences = 4
+    num_inferences = 1
     _ = Parallel(n_jobs=num_inferences)(delayed(job)(i) for i in range(num_inferences))
